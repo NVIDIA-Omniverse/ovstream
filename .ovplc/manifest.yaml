@@ -1,0 +1,26 @@
+version: 1
+repo:
+  docs_plc: docs/plc
+  docs_public: docs
+  release_channels:
+    - github
+
+projects:
+  - id: ovstream
+    name: ovstream
+    type: library
+    release_type: consumer
+    consumer_lifecycle: pre-release
+    source_visibility: internal
+    interface_visibility: public
+    binary_visibility: public
+    publicly_advertised: true
+    release_channels:
+      - github
+      - pypi
+    owners:
+      - dbosnich@nvidia.com
+    path: .
+    docs_plc: docs/plc
+    docs_public: docs
+    dependencies: []
