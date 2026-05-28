@@ -1,0 +1,336 @@
+<!doctype html>
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+
+NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+property and proprietary rights in and to this material, related
+documentation and any modifications thereto. Any use, reproduction,
+disclosure or distribution of this material and related documentation
+without an express license agreement from NVIDIA CORPORATION or
+its affiliates is strictly prohibited.
+-->
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>OVSTREAM SDK &mdash; Example WebRTC Client</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+                margin: 0;
+                padding: 0;
+                background: #ffffff;
+                min-height: 100vh;
+                color: #1f2328;
+            }
+
+            .container {
+                display: flex;
+                flex-direction: column;
+                min-height: 100vh;
+            }
+
+            h1 {
+                font-size: 1.75em;
+                margin: 12px 16px 8px 16px;
+                color: #0969da;
+                font-weight: 600;
+            }
+
+            .control-panel {
+                background: #f6f8fa;
+                border: 1px solid #d0d7de;
+                border-radius: 6px;
+                padding: 12px 16px;
+                margin: 0 16px 8px 16px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                align-items: center;
+            }
+
+            .control {
+                padding: 8px 12px;
+                border: 1px solid #d0d7de;
+                border-radius: 6px;
+                background: #ffffff;
+                color: #1f2328;
+                font-size: 14px;
+                font-weight: 500;
+            }
+
+            input.control { width: 140px; }
+            input.control.port { width: 80px; }
+
+            button.control {
+                cursor: pointer;
+                font-weight: 600;
+                transition: background 0.2s, border-color 0.2s, color 0.2s;
+            }
+
+            button.control:hover:not(:disabled) {
+                background: #2ea043;
+                border-color: #2ea043;
+                color: white;
+            }
+
+            button.control:disabled, select.control:disabled, input.control:disabled {
+                background: #f6f8fa;
+                color: #8c959f;
+                cursor: not-allowed;
+            }
+
+            label {
+                font-size: 14px;
+                font-weight: 500;
+                color: #1f2328;
+            }
+
+            .status {
+                margin-left: auto;
+                padding: 4px 12px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                background: #eaeef2;
+                color: #1f2328;
+            }
+
+            .status.ready { background: #2ea043; color: white; }
+            .status.connecting { background: #fb8500; color: white; }
+            .status.error { background: #cf222e; color: white; }
+
+            .stream-content {
+                position: relative;
+                flex: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0 16px 16px 16px;
+                background: #0d1117;
+                border-radius: 6px;
+                min-height: 60vh;
+            }
+
+            #remote-video {
+                max-width: 100%;
+                max-height: 85vh;
+                outline: none;
+            }
+
+            #loading-info {
+                position: absolute;
+                color: #8c959f;
+                font-size: 1.1em;
+                pointer-events: none;
+                text-align: center;
+                padding: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>OVSTREAM SDK &mdash; Example WebRTC Client</h1>
+
+            <div class="control-panel">
+                <label for="server-ip">Server</label>
+                <input type="text" id="server-ip" class="control" value="127.0.0.1" />
+                <label for="signal-port">Signal Port</label>
+                <input type="number" id="signal-port" class="control port" value="49100" min="1" max="65535" />
+                <button id="connect-button" class="control">Connect</button>
+                <button id="disconnect-button" class="control" disabled>Disconnect</button>
+                <span id="status" class="status ready">Ready</span>
+            </div>
+
+            <div class="stream-content">
+                <!-- No `muted` attribute on either element: the Connect
+                     click counts as a user gesture, so the browser
+                     allows unmuted autoplay from that point on.
+                     simple-streamer's test client uses the same
+                     pattern; muting here silenced the audio track.
+                     `tabindex=-1` makes the element focusable so we
+                     can focus it on mouseenter; the library gates
+                     input forwarding on the focusin event. -->
+                <video id="remote-video" autoplay playsinline tabindex="-1"></video>
+                <audio id="remote-audio" autoplay></audio>
+                <div id="loading-info">Enter the server address and click Connect</div>
+            </div>
+        </div>
+
+        <!--
+            Classic (non-module) script so file:// opens work. The bundle's
+            final line was patched at vendor time from
+              export{Na as AppStreamer, ...}
+            to
+              window.OVWebRTC = {AppStreamer: Na, StreamType: bl, ...}
+            so the library exposes a global instead of ES exports. Re-apply
+            that patch when re-syncing the bundle.
+        -->
+        <script src="./omniverse-webrtc-streaming-library.js"></script>
+        <script>
+            const { AppStreamer, StreamType } = window.OVWebRTC;
+
+            const serverIpInput = document.getElementById('server-ip');
+            const signalPortInput = document.getElementById('signal-port');
+            const connectButton = document.getElementById('connect-button');
+            const disconnectButton = document.getElementById('disconnect-button');
+            const statusEl = document.getElementById('status');
+            const loadingInfo = document.getElementById('loading-info');
+
+            let connected = false;
+
+            function setStatus(cls, text) {
+                statusEl.className = 'status ' + cls;
+                statusEl.textContent = text;
+            }
+
+            function setLoading(text) {
+                if (text) {
+                    loadingInfo.style.display = 'block';
+                    loadingInfo.textContent = text;
+                } else {
+                    loadingInfo.style.display = 'none';
+                }
+            }
+
+            function setControlsConnected(isConnected) {
+                connected = isConnected;
+                connectButton.disabled = isConnected;
+                disconnectButton.disabled = !isConnected;
+                serverIpInput.disabled = isConnected;
+                signalPortInput.disabled = isConnected;
+            }
+
+            async function connect() {
+                if (connected) return;
+
+                const server = serverIpInput.value.trim() || '127.0.0.1';
+                const signalingPort = parseInt(signalPortInput.value, 10) || 49100;
+
+                setStatus('connecting', 'Connecting');
+                setLoading('Connecting to ' + server + ':' + signalingPort + ' ...');
+                setControlsConnected(true);
+
+                try {
+                    // Note: the server dictates the stream resolution
+                    // (whatever was passed to ovstream_start); the client
+                    // deliberately does not send width/height here.
+                    // Client-driven resize is not currently supported.
+                    const result = await AppStreamer.connect({
+                        streamSource: StreamType.DIRECT,
+                        logLevel: 2,
+                        streamConfig: {
+                            videoElementId: 'remote-video',
+                            audioElementId: 'remote-audio',
+                            server,
+                            signalingPort,
+                            fps: 60,
+                            maxReconnects: 3,
+                            onStart: (msg) => {
+                                if (msg.action !== 'start') return;
+                                if (msg.status === 'success') {
+                                    setStatus('ready', 'Connected');
+                                    setLoading('');
+                                    // The ov-web-rtc bundle sets muted=true
+                                    // on the media elements in some code
+                                    // paths and only unmutes them on a
+                                    // visibilitychange event. Without that
+                                    // event the bundle never calls .play(),
+                                    // so audio is silent. Force unmute + play
+                                    // ourselves -- we're still inside the
+                                    // Connect click's user-gesture window,
+                                    // so the browser allows it.
+                                    for (const id of ['remote-video', 'remote-audio']) {
+                                        const el = document.getElementById(id);
+                                        if (!el) continue;
+                                        el.muted = false;
+                                        if (el.srcObject) {
+                                            el.play().catch((e) =>
+                                                console.warn(id + '.play() rejected:', e));
+                                        }
+                                    }
+
+                                    // Input forwarding (mouse / keyboard) is
+                                    // gated behind the library's focusin
+                                    // listener on the video's parent: a real
+                                    // focus event triggers onFocusStream
+                                    // which enables input capture; focusout
+                                    // disables it. We wire mouseenter to
+                                    // focus() the video (with tabindex=-1 to
+                                    // make it focusable) so input activates
+                                    // as soon as the cursor is over the
+                                    // stream, and reactivates automatically
+                                    // whenever focus returns to it after the
+                                    // user clicks a page button.
+                                    const video = document.getElementById('remote-video');
+                                    if (video) {
+                                        video.focus();
+                                    }
+                                } else if (msg.status === 'error') {
+                                    console.error('Stream start error:', msg.info);
+                                    setStatus('error', 'Error');
+                                    setLoading('Failed to connect: ' + (msg.info || 'unknown error'));
+                                    setControlsConnected(false);
+                                }
+                            },
+                            onStop: (msg) => {
+                                if (msg.action !== 'terminate') return;
+                                if (msg.status === 'error') {
+                                    console.error('Stream stopped with error:', msg.info);
+                                    setStatus('error', 'Disconnected');
+                                    setLoading('Disconnected: ' + (msg.info || 'unknown error'));
+                                } else {
+                                    setStatus('ready', 'Ready');
+                                    setLoading('Disconnected');
+                                }
+                                setControlsConnected(false);
+                            },
+                            onUpdate: (msg) => console.log('update', msg),
+                        },
+                    });
+                    console.log('connect() returned', result);
+                } catch (err) {
+                    console.error('Connect threw:', err);
+                    setStatus('error', 'Error');
+                    setLoading('Connect failed: ' + err.message);
+                    setControlsConnected(false);
+                }
+            }
+
+            async function disconnect() {
+                if (!connected) return;
+                setLoading('Disconnecting...');
+                try {
+                    await AppStreamer.terminate();
+                } catch (err) {
+                    console.error('Disconnect threw:', err);
+                }
+                setStatus('ready', 'Ready');
+                setLoading('Disconnected');
+                setControlsConnected(false);
+            }
+
+            connectButton.addEventListener('click', connect);
+            disconnectButton.addEventListener('click', disconnect);
+
+            // Refocus the video whenever the cursor re-enters it so
+            // input forwarding reactivates after the user clicks a
+            // page button (which would otherwise blur the video and
+            // trigger the library's onBlurStream -> captureUserInput(false)
+            // path, stopping the mouse-cursor indicator on the server).
+            const remoteVideo = document.getElementById('remote-video');
+            if (remoteVideo) {
+                remoteVideo.addEventListener('mouseenter', () => {
+                    if (connected) remoteVideo.focus();
+                });
+            }
+
+            window.addEventListener('beforeunload', () => {
+                if (connected) AppStreamer.terminate();
+            });
+        </script>
+    </body>
+</html>

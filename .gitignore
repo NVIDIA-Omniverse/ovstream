@@ -1,0 +1,21 @@
+# Agents
+.claude/
+
+# CMake / FetchContent
+_build/
+_deps/
+out.png
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
