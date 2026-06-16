@@ -1,4 +1,4 @@
-# ovstream SDK — Architecture Overview
+# ovstream SDK
 
 **Scope:** what the SDK looks like from 30,000 feet, and why the
 pieces fit together the way they do. The public API contract lives in
@@ -16,7 +16,50 @@ example or a first-run walkthrough, see `examples/` and
 serve as the C API reference; Python docstrings on the installed wheel
 serve as the Python API reference.
 
+## Contents
+
+- **[Overview](#overview)**
+  - [Context](#context)
+  - [Design principles](#design-principles)
+  - [Layering](#layering)
+  - [Lazy backend registration](#lazy-backend-registration)
+  - [Ref-counted lifecycle](#ref-counted-lifecycle)
+  - [Error handling](#error-handling)
+  - [Strings (`ovstream_string_t`)](#strings-ovstream_string_t)
+  - [Backend specifics](#backend-specifics)
+    - [RTSP](#rtsp-backend)
+    - [WebRTC / native](#webrtc--native-backend)
+    - [SHM (shared memory)](#shm-shared-memory-backend)
+    - [CUDASHM (CUDA shared memory)](#cudashm-cuda-shared-memory-backend)
+  - [Common gotchas](#common-gotchas)
+    - [CUDA synchronization on `stream_video`](#cuda-synchronization-on-stream_video)
+    - [BGRA channel order, NOT RGBA](#bgra-channel-order-not-rgba)
+    - [Register callbacks BEFORE `ovstream_start`](#register-callbacks-before-ovstream_start)
+    - [Log callback wiring](#log-callback-wiring)
+  - [Distribution](#distribution)
+  - [Testing](#testing)
+  - [What's not in scope](#whats-not-in-scope-currently)
+- **[SHM transport wire protocol](#shm-transport-wire-protocol)**
+  - [Naming and discovery](#1-naming-and-discovery)
+  - [Shared-memory region layout](#2-shared-memory-region-layout)
+  - [Producer write algorithm](#3-producer-write-algorithm)
+  - [Consumer read algorithm](#4-consumer-read-algorithm)
+  - [Control channel protocol](#5-control-channel-protocol)
+  - [Versioning](#6-versioning)
+  - [Consumer-facing API](#7-consumer-facing-api)
+- **[Frame pacing utility (`ovstream_utils`)](#frame-pacing-utility-ovstream_utils)**
+  - [Three surfaces, one algorithm](#three-surfaces-one-algorithm)
+  - [API reference](#api-reference)
+  - [Tick algorithm in detail](#tick-algorithm-in-detail)
+  - [Stats: rolling vs cumulative](#stats-rolling-vs-cumulative)
+  - [Threading model](#threading-model)
+  - [Memory model](#memory-model)
+  - [Errors](#errors)
+  - [What `ovstream_utils` deliberately is not](#what-ovstream_utils-deliberately-is-not)
+
 ---
+
+# Overview
 
 ## Context
 
@@ -47,7 +90,7 @@ frames without pulling in the larger Omniverse Kit framework.
 
 ## Layering
 
-```
+```text
   Consumer code (Python, C/C++, CMake)
   │
   ▼
@@ -62,13 +105,16 @@ frames without pulling in the larger Omniverse Kit framework.
   │
   ├──▶ RTSP backend     ─ GStreamer + gst-rtsp-server + bundled gstnvenc
   ├──▶ WebRTC backend   ─ StreamSDK (NativeWebRTC + Default backends)
-  └──▶ SHM backend      ─ named shared memory (local-process IPC)
+  ├──▶ SHM backend      ─ named shared memory (local-process IPC)
+  └──▶ CUDASHM backend  ─ server-owned CUDA buffer ring exported via
+                          cudaIpcMemHandle (same-host GPU-resident IPC)
 ```
 
 Every public call enters the C API layer. It validates arguments,
 resolves the opaque handle to the internal server interface, and
-forwards. RTSP, WebRTC, and SHM backends all implement the same
-internal interface — clean seam for swapping in other protocols later.
+forwards. RTSP, WebRTC, SHM, and CUDASHM backends all implement the
+same internal interface — clean seam for swapping in other protocols
+later.
 
 ### Python bindings
 
@@ -165,9 +211,9 @@ asymmetric:
   API or copy `length` bytes — no extra `strlen` pass needed.
 
 Helper macros in `ovstream_types.h`: `OVSTREAM_STRING_LITERAL("…")`
-builds an input view from a string literal at compile time;
-`ovstream_string_is_empty(&v)` tests for a NULL pointer or zero
-length.
+builds an input view from a string literal at compile time. Callers
+that need to test for emptiness inspect the fields directly:
+`v.ptr == NULL || v.length == 0`.
 
 The struct is intentionally analogous to ovrtx's `ovx_string_t` and
 is expected to consolidate into a shared `ovx`-style utility header
@@ -187,6 +233,9 @@ definition.
 - For pre-encoded input (`video_input = H264` or `H265`), the pipeline
   is pure passthrough: the caller's bitstream goes straight into
   `rtph*pay`.
+- `config.cuda_device` selects the encoder GPU, applied as the
+  `nvh264enc cuda-device-id` property; `-1` uses the element's
+  registered device.
 - `OVSTREAM_VIDEO_INPUT_CUSTOM` lets the caller supply a verbatim
   GStreamer pipeline string via `config.rtsp.pipeline`. It is
   pre-encoded / host-buffer only; raw-CUDA through a custom pipeline
@@ -211,9 +260,39 @@ definition.
   - `OVSTREAM_SERVER_NATIVE` (lower-latency proprietary flavor, native StreamSDK client only).
 - Raw CUDA input is encoded by StreamSDK. Pre-encoded input is
   passed through via `H264` / `H265` / `AV1` surface formats.
+- `config.cuda_device` / `config.cuda_context` are passed to StreamSDK
+  as the encoder's device + context. `-1` lets StreamSDK pick its
+  default adapter, which on a multi-GPU host is typically the display
+  GPU — set `cuda_device` to the GPU the producer's frames live on, or
+  the encoder reads an inaccessible pointer and the client connects but
+  never decodes. A one-time check on the first frame logs an error if
+  the buffer's device doesn't match.
+- `cuda_context` is **required** alongside `cuda_device` when the
+  producer renders into its own CUDA context (Warp, ovrtx, most
+  renderers): StreamSDK copies the input through that context, and with
+  `cuda_context = 0` it falls back to the device's primary context,
+  which cannot read a buffer owned by a different context — the copy
+  fails with `CUDA error invalid argument: Copying device buffer to
+  VideoFrameResourceCuda`. `0` is safe only when the frames already live
+  in the primary context (plain `cudaMalloc`). The device-match check
+  above does not catch this — the device matches; the context doesn't.
 - StreamSDK's ERROR level is conservative — many things it reports
   as errors are recoverable conditions, so the SDK remaps them to
   WARN before delivering to the user's log callback.
+- STUN / TURN credentials are supplied via
+  `ovstream_webrtc_set_ice_servers` (C) /
+  `Server.set_webrtc_ice_servers` (Python). Replace-all semantics;
+  may be called BEFORE `ovstream_start` (cached, applied at startup)
+  or AFTER `ovstream_start` (applied immediately via StreamSDK's
+  runtime-parameter API — the canonical path for refreshing
+  time-limited TURN tokens without restarting the stream). Each
+  entry's URLs are split on `,` and classified by scheme: `stun:` /
+  `stuns:` route to StreamSDK's NAT-server table (up to 4 entries),
+  `turn:` / `turns:` route to the TURN table (up to 8 entries),
+  with at most 3 URLs per entry. Transport policy is fixed to
+  "all" (try direct paths first, fall back to TURN) — matches the
+  WebRTC default. The setter returns `NOT_SUPPORTED` on RTSP / SHM /
+  CUDASHM backends, which have no ICE concept.
 
 ### SHM (shared memory) backend
 
@@ -226,6 +305,9 @@ definition.
   on the same host consuming frames without paying a codec or
   network transport tax. Off-machine consumers should use RTSP or
   WebRTC.
+- `config.cuda_device` selects the GPU the device-to-host copy stream
+  runs on (created on that device, with the calling thread's current
+  device saved and restored around it); `-1` uses the current device.
 - Accepts raw CUDA (`OVSTREAM_VIDEO_INPUT_CUDA`) and DLPack tensor
   (`OVSTREAM_VIDEO_INPUT_TENSOR`) input. `OVSTREAM_VIDEO_INPUT_CUSTOM`
   and the pre-encoded codecs (`H264`, `H265`, `AV1`) are rejected for
@@ -237,7 +319,61 @@ definition.
 - Wire format (segment layout, frame header, ring-buffer semantics,
   control-channel protocol) is documented in the
   [SHM transport wire protocol](#shm-transport-wire-protocol) section
-  below. See `skills/shm-consumers/SKILLS.md` for a reader walkthrough.
+  below. See `skills/shm-consumers/SKILL.md` for a reader walkthrough.
+
+### CUDASHM (CUDA shared memory) backend
+
+- Sibling of the SHM backend that keeps frames GPU-resident. The
+  server allocates a ring of CUDA buffers (one per slot) with
+  `cudaMallocPitch`, exports a `cudaIpcMemHandle_t` for each via
+  `cudaIpcGetMemHandle`, and publishes the handle table through a
+  small host-shared metadata region (~600 bytes for the default ring
+  depth of 4). On each `ovstream_stream_video` call the server does
+  a D2D `cudaMemcpy2DAsync` from the producer's CUDA pointer into
+  the next ring slot, then publishes the slot index via the same
+  atomic-sequence protocol as SHM. Same-host (or
+  same-container-host) consumers attach with
+  `ovstream_cudashm_client_create`, import every IPC handle once,
+  and read pixels directly from the imported device pointer when
+  `wait_frame` returns -- no device-to-host copy on either side.
+- The intended use case is "render-output → simulation kernel
+  zero-copy" workloads: the consumer's CUDA kernel reads the slot
+  pointer directly with no encoder, no network, and no host
+  staging. Off-machine consumers should use RTSP or WebRTC.
+- **Producer device selection.** Set `config.cuda_device` to allocate
+  the ring (and run the D2D copy stream) on a specific GPU; the server
+  switches to it and restores the calling thread's previous current
+  device before returning. When `cuda_device` is `-1` the ring is
+  allocated on the calling thread's current device at `ovstream_start`
+  time (the producer calls `cudaSetDevice(N)` first, same posture as
+  the SHM backend) and the server does not call `cudaSetDevice` itself
+  — doing so would force eager initialization of the primary context
+  and interfere with StreamSDK's setup if a WebRTC / native server
+  starts in the same process afterwards. The selected device ordinal is
+  stamped into `RegionHeader::gpuDeviceOrdinal`; the consumer reads it
+  back via `ovstream_cudashm_client_get_producer_device` and must do its
+  CUDA work on that device (or a peer-capable one), since
+  `cudaIpcOpenMemHandle` imports the producer's memory.
+- Accepts the same input modes as SHM (`OVSTREAM_VIDEO_INPUT_CUDA`,
+  `OVSTREAM_VIDEO_INPUT_TENSOR`); pre-encoded codecs are rejected.
+- Bidirectional control channel and `send_message` behave identically
+  to SHM (separate UDS / named pipe endpoint prefixed with `cuda-`
+  so the two backends coexist with the same `stream_name`).
+  `stream_audio` is not supported.
+- Lifetime contract: the consumer is responsible for completing its
+  read kernel before the producer's ring wraps onto the same slot.
+  `cudashm.slot_count` (default 4, range [2, 8]) is the tuning knob;
+  each slot costs `width * height * 4` bytes of GPU memory.
+- Consumer-side entry points: C / C++ consumers link the slim
+  `ovstream_cudashm_client` shared library and include
+  `<ovstream/ovstream_cudashm_client.h>` —
+  `ovstream_cudashm_client_create`, `_wait_frame`,
+  `_is_producer_alive`, `_send_input_event`, `_send_message`,
+  `_destroy`. Python consumers use `ovstream.CudashmClient`
+  (defined in `ovstream/_cudashm_client.py`), which wraps the same
+  C API and surfaces `CudashmFrame` with the imported device
+  pointer. See `skills/cudashm-consumers/SKILL.md` for a reader
+  walkthrough.
 
 ### Mapping user `log_min_severity` to dependencies
 
@@ -252,6 +388,45 @@ backends at their first lazy-init:
 This way `LogLevel.VERBOSE` via `ovstream.initialize(log_min_severity=…)`
 actually produces verbose dependency output, not just verbose
 SDK-wrapper output.
+
+## Common gotchas
+
+Four things that bite production integrations more often than the rest of this document. The full contracts live in `ovstream_types.h` / `ovstream.h` and the per-skill files under `skills/`; this section is the consolidated reading order for someone integrating ovstream for the first time.
+
+### CUDA synchronization on `stream_video`
+
+Producers that submit GPU work for the frame they're about to push should use `ovstream_video_frame_t::sync` rather than fencing the whole device with `cudaDeviceSynchronize` before each `ovstream_stream_video` call:
+
+- `frame.sync.wait_event` — the most precise signal. ovstream waits on this `cudaEvent_t` (cast to `uintptr_t`) before reading the buffer. For SHM and CUDASHM the wait chains as `cudaStreamWaitEvent` on the internal ingest stream, so the producer's stream is not host-blocked.
+- `frame.sync.stream` — fallback when an event isn't available. On SHM/CUDASHM this falls back to `cudaStreamSynchronize` on the caller's stream (host-blocking); on RTSP/WebRTC the encoder always host-blocks anyway, so the field's role there is "what stream to sync against."
+- Both zero (struct value-initialized) — the SDK trusts the caller to have already synchronized.
+- `wait_event` takes precedence when both fields are non-zero.
+
+Leaving `sync` zero-init and relying on global device sync works correctness-wise but wastes the SDK's ability to chain encoder ingest off the producer's GPU work without a CPU stall.
+
+### BGRA channel order, NOT RGBA
+
+All raw-CUDA video paths are BGRA8 — bytes per pixel, in this order: B, G, R, A. RGBA producers ship blue-tinted video and never see an error because the buffer is byte-correct, just channel-swapped. If your renderer outputs RGBA, swizzle producer-side before the `stream_video` call. Consumers of `OVSTREAM_VIDEO_INPUT_TENSOR` via DLPack are also responsible for delivering BGRA8-shaped tensors.
+
+Pitch is the second alignment surface. For raw CUDA, `pitch_bytes` should be at least `width * 4`, and is conventionally aligned to 64 bytes for DMA efficiency (the SHM/CUDASHM ring rounds its `maxPitchBytes` to 64 for the same reason). Even widths are required by the NVENC encoder used in WebRTC/native and the `gstnvenc`-fronted RTSP backend; odd widths fail the start handshake rather than silently rounding.
+
+### Register callbacks BEFORE `ovstream_start`
+
+`ovstream_set_connection_callback`, `_message_callback`, `_input_callback`, and `_unicode_callback` can be called at any time, but they only deliver **future** transitions. Registering after `ovstream_start` returns means an in-flight first-connect or first-message event can fire before the callback is set and be lost — the SDK does not replay the initial state on registration.
+
+Safe patterns:
+
+- Register all callbacks BEFORE calling `ovstream_start`. The connection callback in particular wants to be in place before the network listener accepts the first client.
+- If a callback must be set after start, call `ovstream_is_client_connected` immediately after registering to recover the initial connection state synchronously.
+
+### Log callback wiring
+
+The log callback is registered through `ovstream_init_config_t::log_callback` passed to `ovstream_initialize`, alongside the `log_min_severity` field on the same struct. Two non-obvious rules:
+
+- Only the very first `ovstream_initialize` call (the refcount 0 → 1 transition) installs the callback. Subsequent `initialize` calls increment the refcount and ignore their `log_callback` field. To swap the callback, drain the refcount to zero with matching `shutdown` calls, then re-initialize.
+- The callback fires for SDK-internal messages AND for everything GStreamer / StreamSDK log. Use `log_min_severity` to filter: `OVSTREAM_LOG_VERBOSE` is firehose-level, `OVSTREAM_LOG_WARNING` is the recommended production default. `OVSTREAM_LOG_DEFAULT` (the zero-init value) is remapped to WARNING, so a `{0}`-initialized config is quiet by default.
+
+Python equivalent: `ovstream.initialize(log_fn=..., log_min_severity=...)` — same refcount-0→1 install rule.
 
 ## Distribution
 
@@ -281,7 +456,6 @@ test sources themselves are not part of the distributed package.
   resolution was passed to `ovstream_start`; client-requested
   viewport changes are ignored).
 - Clipboard sync.
-- STUN / TURN credential management.
 - Pre-encoded AV1 for RTSP (WebRTC/native only).
 - Audio codecs other than PCM16.
 - Raw-CUDA input through a custom RTSP pipeline.
@@ -292,7 +466,7 @@ See `CHANGELOG.md` for what has shipped.
 # SHM transport wire protocol
 
 **Version:** 1
-**Status:** Pre-release; targeting stable from 0.3.0.
+**Status:** Pre-release
 
 This section specifies the on-disk / on-wire surface of the ovstream
 SHM (shared-memory) transport. It is the contract downstream consumers
@@ -353,7 +527,7 @@ The region is a single contiguous mapping with the following structure:
 | Offset | Size | Field | Description |
 |---:|---:|---|---|
 | 0 | 4 | `magic` | `0x4D53564F` (`'OVSM'` LE). Reject if mismatched. |
-| 4 | 4 | `protocolVersion` | Currently `1`. Reject if mismatched. |
+| 4 | 4 | `protocolVersion` | Currently `2`. Reject if mismatched. |
 | 8 | 4 | `pixelFormat` | Currently `1` = `OVSTREAM_SHM_FORMAT_BGRA8`. Other values reserved. |
 | 12 | 4 | `slotCount` | Ring depth; `2..8`. |
 | 16 | 4 | `maxWidth` | Width capacity (px). |
@@ -364,9 +538,10 @@ The region is a single contiguous mapping with the following structure:
 | 40 | 8 | `latestSequence` | Little-endian u64, written with release / read with acquire. Monotonic; `0` = no frame yet. |
 | 48 | 4 | `latestSlot` | Little-endian u32, written with release / read with acquire. Index of slot holding `latestSequence`. |
 | 52 | 4 | `producerAlive` | Little-endian u32, written with release / read with acquire. `0` = stopped/crashed, `1` = running. |
-| 56 | 64 | `reserved[64]` | Must be zero in V1. May be repurposed in future protocol versions. |
+| 56 | 4 | `producerPid` | Little-endian u32. Producer's OS process ID, written **before** the release-store of `producerAlive`. Consumers probe this PID (POSIX `kill(pid, 0)`, Windows `OpenProcess`+`GetExitCodeProcess`) to detect a hard-killed producer whose `producerAlive` is stuck at `1` because no destructor ran. New in V2. |
+| 60 | 60 | `reserved[60]` | Must be zero. May be repurposed in future protocol versions. |
 
-The `latestSequence`, `latestSlot`, and `producerAlive` fields are written by the producer with release ordering and read by consumers with acquire ordering. The reader algorithm in §4 explains the interlock.
+The `latestSequence`, `latestSlot`, and `producerAlive` fields are written by the producer with release ordering and read by consumers with acquire ordering. The reader algorithm in §4 explains the interlock. `producerPid` is a plain u32 — it's written once at start, before the release-store of `producerAlive`, so any reader that acquire-loads `producerAlive == 1` is guaranteed to also observe the matching `producerPid`.
 
 ### 2.2 SlotHeader + pixels (each slot)
 
@@ -424,7 +599,7 @@ Per `wait_frame(timeoutMs)`:
 
 1. Maintain a per-client `lastObservedSequence` (initialized to `0`).
 2. Read `header.latestSequence` (acquire); if `> lastObservedSequence`, proceed to step 4.
-3. Otherwise wait on the wakeup primitive (with `timeoutMs`). On wake, loop to step 2. If the producer is no longer alive (`header.producerAlive.load(acquire) == 0`), return failure.
+3. Otherwise wait on the wakeup primitive (with `timeoutMs`). On wake, loop to step 2. If the producer is no longer alive — either `header.producerAlive.load(acquire) == 0` (clean shutdown) or, with the flag still `1`, a `processExists(header.producerPid)` probe returns false (hard kill) — return failure. The PID probe runs only in this cold path, never on the hot observe-a-fresh-frame path, so frame-rate cost is zero.
 4. Snapshot `seq = header.latestSequence` (acquire) and `slotIdx = header.latestSlot` (acquire).
 5. Read `slot[slotIdx].sequence` (acquire) → if it doesn't equal `seq`, the producer wrapped around mid-publish. Loop to step 2.
 6. Read slot header fields and pixel data.
@@ -481,9 +656,16 @@ The server tracks attached client count atomically. The transition `0 → 1` (fi
 
 ## 6. Versioning
 
-The `protocolVersion` field in both the region header and the `ATTACH`/`ATTACH_OK` handshake gates compatibility. A client that reads a region whose `protocolVersion` doesn't match its own constant **must refuse to attach** and report an error. The same applies to a server receiving an `ATTACH protocolVersion=N` where N differs from its own — though the V1 server is lenient (it sends `ATTACH_OK` and lets the client decide).
+The `protocolVersion` field in both the region header and the `ATTACH`/`ATTACH_OK` handshake gates compatibility. A client that reads a region whose `protocolVersion` doesn't match its own constant **must refuse to attach** and report an error. The same applies to a server receiving an `ATTACH protocolVersion=N` where N differs from its own — though the current server is lenient (it sends `ATTACH_OK` and lets the client decide).
 
 Adding fields to `RegionHeader::reserved` or the slot pad is a **breaking change**: bump `protocolVersion`. Adding new control-channel lines is **non-breaking** as long as existing lines are unchanged: the `INPUT_KEY` / `INPUT_MOUSE` / `INPUT_GAMEPAD` / `MESSAGE` / `UNICODE` lines were added under V1 after the initial shipping of `ATTACH` / `DETACH` / `ATTACH_OK`, with no `protocolVersion` bump.
+
+### 6.1 Version history
+
+| Version | Change |
+|---:|---|
+| 1 | Initial format. |
+| 2 | Added `producerPid` (4 bytes) to `RegionHeader`, consuming 4 bytes of the trailing reserved padding. Enables consumer-side hard-kill detection via a read-only process-existence probe; see §4 step 3 and `core/process.h::processExists`. No SlotHeader or control-channel changes. |
 
 ---
 
@@ -520,7 +702,7 @@ both use `ovstream_utils.Loop` for pacing.
 
 ovstream_utils exposes three public surfaces (the Loop API; future utilities will follow the same pattern):
 
-```
+```text
 +------------------------------+   +---------------------------------+   +------------------+
 | <ovstream_utils/loop.h>      |   | <ovstream_utils/loop.hpp>       |   | ovstream_utils   |
 | C ABI                        |   | header-only C++                 |   | Python           |
@@ -798,7 +980,7 @@ clock. It runs only when:
 The deadline is computed from the *previous deadline*, not from
 "now". This is the load-bearing trick that prevents long-term drift:
 
-```
+```text
 deadlineNs = lastWaitDeadlineNs + targetFrameNs   (or lastTickStartTimeNs + targetFrameNs on the first paced tick)
 ```
 
@@ -840,7 +1022,7 @@ anchor for the next tick's deadline.
 The variable / render dt is the raw measured wall-clock interval
 since the previous tick:
 
-```
+```text
 variableDeltaNs = startTimeNs - lastTickStartTimeNs
 ```
 
@@ -856,7 +1038,7 @@ The fixed-step accumulator runs on the *raw* measured delta so a
 caller's stall genuinely owes the work it would have owed at the
 true fixed rate:
 
-```
+```text
 accumulatorNs += rawDeltaNs
 steps = accumulatorNs / fixedStepNs        # integer division
 if steps > fixedStepMax:
@@ -873,7 +1055,7 @@ the next tick — almost certainly worse than the original stall.
 `fixedTimeAlpha` is what's *left* in the accumulator after the
 integer division, expressed as a fraction of one fixed step:
 
-```
+```text
 fixedTimeAlpha = accumulatorNs / fixedStepNs   # in [0.0, 1.0)
 ```
 

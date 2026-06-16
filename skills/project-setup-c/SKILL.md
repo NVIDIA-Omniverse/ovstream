@@ -1,14 +1,3 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: LicenseRef-NvidiaProprietary
-
-NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-property and proprietary rights in and to this material, related
-documentation and any modifications thereto. Any use, reproduction,
-disclosure or distribution of this material and related documentation
-without an express license agreement from NVIDIA CORPORATION or
-its affiliates is strictly prohibited.
--->
 ---
 name: project-setup-c
 description: Setting up a new CMake C/C++ project that uses ovstream. Use when user asks to create a new C project, set up CMake with ovstream, scaffold a C++ streaming app, or configure build dependencies.
@@ -103,7 +92,8 @@ cmake --build build --config Release
 |--------|---------|
 | `<ovstream/ovstream.h>` | Main API: initialize/shutdown, create/destroy server, start/stop, stream frames, register callbacks. |
 | `<ovstream/ovstream_types.h>` | All type definitions (handles, structs, enums, version macros). |
-| `<ovstream/ovstream_shm_client.h>` | SHM consumer API (writing readers, not producers). |
+| `<ovstream/ovstream_shm_client.h>` | SHM consumer API (host-resident; writing readers, not producers). |
+| `<ovstream/ovstream_cudashm_client.h>` | CUDASHM consumer API (GPU-resident; writing readers that import producer IPC handles via `cudaIpcOpenMemHandle`). |
 | `<ovstream_utils/loop.hpp>` | Optional header-only frame pacer (`ovstream_utils::Loop`). |
 
 ## Common Pitfalls

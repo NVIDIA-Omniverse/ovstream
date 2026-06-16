@@ -88,6 +88,7 @@ PROTOCOL_MAP = {
     "webrtc": ovstream.ServerType.WEBRTC,
     "native": ovstream.ServerType.NATIVE,
     "shm": ovstream.ServerType.SHM,
+    "cudashm": ovstream.ServerType.CUDASHM,
 }
 
 
@@ -95,22 +96,22 @@ def parse_server_spec(spec: str):
     """Parse a `protocol[:detail]` spec into (ServerType, detail, label).
 
     `detail` is the port (int) for network protocols, the stream name
-    (str) for SHM, or 0 / "" if unspecified. The caller dispatches on
-    ServerType to decide which config field to populate.
+    (str) for SHM and CUDASHM, or 0 / "" if unspecified. The caller
+    dispatches on ServerType to decide which config field to populate.
     """
     parts = spec.split(":", 1)
     protocol = parts[0].lower()
 
     if protocol not in PROTOCOL_MAP:
         print(f"Unknown protocol: {protocol}")
-        print("  Protocols: webrtc, rtsp, native, shm")
+        print("  Protocols: webrtc, rtsp, native, shm, cudashm")
         sys.exit(1)
 
     server_type = PROTOCOL_MAP[protocol]
 
-    if server_type == ovstream.ServerType.SHM:
+    if server_type in (ovstream.ServerType.SHM, ovstream.ServerType.CUDASHM):
         stream_name = parts[1] if len(parts) > 1 else ""
-        label = f"SHM:{stream_name or '<auto>'}"
+        label = f"{protocol.upper()}:{stream_name or '<auto>'}"
         return server_type, stream_name, label
 
     port = int(parts[1]) if len(parts) > 1 else 0
@@ -147,6 +148,11 @@ def main():
         log_min_severity=ovstream.LogLevel.ERROR,
     )
     try:
+        # Frames are produced in Warp's CUDA context on cuda:0. StreamSDK
+        # needs that context to read them (a device ordinal alone fails the
+        # encode on a multi-GPU host), so pass it via cuda_context below.
+        stream_cuda_context = int(wp.get_device("cuda:0").context)
+
         servers = []
         for server_type, detail, label in specs:
             s = ovstream.Server(server_type)
@@ -154,7 +160,8 @@ def main():
 
             if server_type in (ovstream.ServerType.WEBRTC,
                                ovstream.ServerType.NATIVE,
-                               ovstream.ServerType.SHM):
+                               ovstream.ServerType.SHM,
+                               ovstream.ServerType.CUDASHM):
                 s.on_message = make_message_handler(s)
                 s.on_input = lambda event: (
                     print(f"Input: {event.type.name} key={event.keyboard.key_code}")
@@ -165,6 +172,13 @@ def main():
                 width=W,
                 height=H,
                 video_input=ovstream.VideoInput.TENSOR,
+                # Pin the encoder/copy to cuda:0 (where the frames live) and
+                # hand it the producer's CUDA context. The default would be
+                # the display GPU on a multi-GPU host; cuda_device without
+                # cuda_context fails the encode for a producer with its own
+                # CUDA context.
+                cuda_device=0,
+                cuda_context=stream_cuda_context,
             )
             if server_type == ovstream.ServerType.RTSP:
                 if detail:
@@ -172,6 +186,9 @@ def main():
             elif server_type == ovstream.ServerType.SHM:
                 if detail:
                     cfg.shm_stream_name = detail
+            elif server_type == ovstream.ServerType.CUDASHM:
+                if detail:
+                    cfg.cudashm_stream_name = detail
             else:  # WebRTC / Native
                 if detail:
                     cfg.webrtc_signal_port = detail
@@ -182,6 +199,9 @@ def main():
                 print(f"[{label}] rtsp://localhost:{detail or 8554}/stream")
             elif server_type == ovstream.ServerType.SHM:
                 print(f"[{label}] attach with: python examples/python/local_stream/main_viewer.py "
+                      f"{detail or '<see ovstream log for auto name>'}")
+            elif server_type == ovstream.ServerType.CUDASHM:
+                print(f"[{label}] attach with: python examples/python/local_stream/main_cudashm_viewer.py "
                       f"{detail or '<see ovstream log for auto name>'}")
             else:
                 print(f"[{label}] signal port {detail or 49100}")

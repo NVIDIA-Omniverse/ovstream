@@ -15,32 +15,28 @@ This directory contains structured skill files for AI coding agents (Cursor, Cla
 
 ## Structure
 
-Each subdirectory contains a single `SKILLS.md` file with YAML frontmatter:
+Each subdirectory contains a single `SKILL.md` file with YAML frontmatter:
 
-```
+```text
 skills/
-  project-setup-c/SKILLS.md
-  project-setup-python/SKILLS.md
-  application-flow/SKILLS.md
-  server-creation/SKILLS.md
-  streaming-frames/SKILLS.md
-  protocol-selection/SKILLS.md
-  callbacks-and-input/SKILLS.md
-  cuda-interop/SKILLS.md
-  error-handling/SKILLS.md
-  shm-consumers/SKILLS.md
+  project-setup-c/SKILL.md
+  project-setup-python/SKILL.md
+  application-flow/SKILL.md
+  server-creation/SKILL.md
+  streaming-frames/SKILL.md
+  protocol-selection/SKILL.md
+  callbacks-and-input/SKILL.md
+  cuda-interop/SKILL.md
+  error-handling/SKILL.md
+  shm-consumers/SKILL.md
+  cudashm-consumers/SKILL.md
 ```
 
-## SKILLS.md Format
+## SKILL.md Format
 
-Each file opens with a vendored SPDX HTML comment for license attribution, followed by the YAML frontmatter, followed by the body. Frontmatter parsers that require `---` at byte 0 (rather than after a leading comment block) will not find these files; downstream tooling that consumes these skills is expected to either skip the HTML comment or treat the file as plain Markdown.
+Each file is a YAML frontmatter block at byte 0, followed by a Markdown body. License attribution comes from the repo-root `LICENSE` file; individual skill files do not carry their own SPDX header so strict frontmatter parsers (Claude Code's skill auto-loader, the agent-readiness-skill-docs-alignment suite, etc.) that match `---` at byte 0 discover them correctly.
 
 ```markdown
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: LicenseRef-NvidiaProprietary
-... (full SPDX boilerplate) ...
--->
 ---
 name: skill-name
 description: What this skill covers. Use when user asks to [trigger phrases].
@@ -89,7 +85,7 @@ ovstream_initialize(&initCfg);
 
 Names are kebab-case and unique within each file.
 
-### Reference format in SKILLS.md
+### Reference format in SKILL.md
 
 Replace inline code blocks with a blockquote directive:
 
@@ -103,12 +99,12 @@ Agents read the referenced file between the `# [snippet:name]` and `# [/snippet:
 
 1. **Add examples first.** If the workflow isn't already covered by an example under `examples/`, add one (or extend an existing one) with `# [snippet:name]` / `# [/snippet:name]` markers around each illustrative section.
 2. Create a new directory under `skills/` named after the skill (kebab-case).
-3. Add a `SKILLS.md` file inside it following the format above.
+3. Add a `SKILL.md` file inside it following the format above.
 4. **Do not write inline code blocks for API usage.** Reference example snippets using `> **Source:** ...` blockquotes.
 
 ## Updating Skills
 
-When you change the ovstream API surface, examples, or conventions that affect an existing skill, update the corresponding `SKILLS.md` to keep it accurate.
+When you change the ovstream API surface, examples, or conventions that affect an existing skill, update the corresponding `SKILL.md` to keep it accurate.
 
 ## Modifying Examples
 

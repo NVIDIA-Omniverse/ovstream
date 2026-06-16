@@ -1,14 +1,3 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: LicenseRef-NvidiaProprietary
-
-NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-property and proprietary rights in and to this material, related
-documentation and any modifications thereto. Any use, reproduction,
-disclosure or distribution of this material and related documentation
-without an express license agreement from NVIDIA CORPORATION or
-its affiliates is strictly prohibited.
--->
 ---
 name: streaming-frames
 description: Submitting video frames to ovstream (raw CUDA BGRA8 or pre-encoded bitstreams). Use when user asks how to push frames, the video frame format, pitch alignment, or pre-encoded passthrough.
@@ -53,7 +42,7 @@ for _ in range(num_frames):
 
 ## Buffer lifetime contract
 
-The frame buffer is **not copied** by `stream_video`. Per the header contract, `buffer` must remain valid until at least the *next* `stream_video` call on the same server returns — the encoder reads from it on its own threads after this call hands off. The recommended pattern across both languages: a single long-lived CUDA buffer that you re-fill in place each frame, not a per-frame allocation. (Per-frame allocations are still legal, but you must keep the previous frame's allocation alive until the call that submits the *next* frame returns.)
+`stream_video` **stages the frame data into server-owned memory before returning** on every backend (RTSP / WebRTC / native / SHM / CUDASHM). The caller may reuse or free `buffer` (including a stack buffer or a per-iteration `std::vector`) as soon as the call returns. Reusing a single long-lived buffer across frames is still the recommended pattern because it avoids per-frame allocation, but per-frame allocations are equally safe. Producers that want to skip the staging copy and overlap their next render with the encoder's read should pass a CUDA event via `frame.sync.wait_event` — backends host-block on it before staging, so the producer's render can chain after the wait.
 
 ## Pitch
 
@@ -69,14 +58,14 @@ If you already have encoded NAL units / OBUs (e.g. from a video decoder, a recor
 >
 > Followed by: `examples/c/pre_encoded_stream/main.cpp` snippet `pre-encoded-loop`
 
-RTSP and WebRTC both support pre-encoded H.264/H.265; WebRTC additionally supports AV1. RTSP does not currently support AV1. SHM does **not** support pre-encoded — it only carries raw BGRA8.
+RTSP and WebRTC both support pre-encoded H.264/H.265; WebRTC additionally supports AV1. RTSP does not currently support AV1. Neither SHM nor CUDASHM supports pre-encoded — both carry raw BGRA8 only.
 
 ## Per-frame metadata (optional)
 
 `ovstream_video_frame_t` has three optional metadata fields — `metadata` (blob pointer), `metadata_size` (bytes), and `metadata_uuid` (16-byte type identifier). Populate them on the frame descriptor you pass to the regular `stream_video` call; there are no separate `*WithMetadata` entry points.
 
 - For RTSP pre-encoded streams, the SDK injects the metadata as SEI User Data Unregistered NAL units (ITU-T H.264/H.265).
-- For RTSP raw-CUDA streams (encoder owns the bitstream) and on WebRTC / SHM, metadata is currently ignored.
+- For RTSP raw-CUDA streams (encoder owns the bitstream) and on WebRTC / SHM / CUDASHM, metadata is currently ignored.
 
 Use only if you need per-frame tags that traverse the wire.
 
@@ -95,4 +84,4 @@ Use only if you need per-frame tags that traverse the wire.
 - For BGRA8, `pitch_bytes >= width * 4`. Using `pitch_bytes = width * 4` is fine when `cudaMallocPitch` happens to align that way, but trust `cudaMallocPitch`'s returned pitch — don't hard-code.
 - A non-`SUCCESS` `stream_video` return is normal early in a stream's life (no client connected yet) — backends mostly accept early frames silently for pipeline warm-up, but if they do surface a failure, log at verbose and continue.
 - BGRA channel order, not RGBA. Any producer that emits RGBA needs to swizzle on the GPU before handing the buffer to ovstream. At the time of writing, ovrtx's `LdrColor` is RGBA8 — a producer-side BGRA8 path is in flight inside ovrtx; until that lands, [`examples/python/ovrtx_stream/main.py`](../../examples/python/ovrtx_stream/main.py) does the swizzle in the application layer between the renderer and ovstream.
-- Audio frames go through `stream_audio` / `ovstream_stream_audio` (16-bit PCM, WebRTC/native only). RTSP and SHM don't support audio — `stream_audio` returns `OVSTREAM_API_NOT_SUPPORTED` (Python: `OvstreamError` with `.status == ApiStatus.NOT_SUPPORTED`) on those.
+- Audio frames go through `stream_audio` / `ovstream_stream_audio` (16-bit PCM, WebRTC/native only). RTSP, SHM, and CUDASHM don't support audio — `stream_audio` returns `OVSTREAM_API_NOT_SUPPORTED` (Python: `OvstreamError` with `.status == ApiStatus.NOT_SUPPORTED`) on those.

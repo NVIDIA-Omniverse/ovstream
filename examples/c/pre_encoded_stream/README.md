@@ -9,7 +9,17 @@ This is the right path when your frames come from a hardware encoder, a recorded
 
 ## Prerequisites
 
-Same as [`basic_stream`](../basic_stream/README.md). When built standalone via this subdirectory's `CMakeLists.txt` the example doesn't allocate any CUDA buffers and a CUDA toolkit is not strictly required. When built from the umbrella `examples/c/CMakeLists.txt` (which configures the CUDA language for sibling examples like `basic_stream`), CUDA is required.
+### Linux
+
+```bash
+sudo apt-get install build-essential cmake
+```
+
+### Windows
+
+[Visual Studio 2019 or newer](https://visualstudio.microsoft.com/downloads/).
+
+When built standalone via this subdirectory's `CMakeLists.txt` the example doesn't allocate any CUDA buffers and a CUDA toolkit is not strictly required. When built from the umbrella `examples/c/CMakeLists.txt` (which configures the CUDA language for sibling examples like `basic_stream`), CUDA is required.
 
 ## Build
 
@@ -38,6 +48,6 @@ The example starts an RTSP server on `rtsp://localhost:8554/stream` and pushes s
 
 - `cfg.video_input = OVSTREAM_VIDEO_INPUT_H264` — switching the server into pre-encoded mode.
 - `ovstream_video_frame_t` with `size_bytes` populated (instead of `pitch_bytes`) — the discriminant that tells ovstream "this is a bitstream, not a CUDA buffer."
-- Double-buffered payloads so each frame's bytes outlive the `ovstream_stream_video` call that submitted them (per the lifetime contract in `ovstream_types.h`).
+- Per-iteration `std::vector` payloads, relying on the lifetime contract in `ovstream_types.h` (`ovstream_stream_video` stages the bitstream into server-owned memory before returning, so the source vector can go out of scope on the next loop iteration).
 
 For the raw-CUDA path, see [`basic_stream`](../basic_stream/README.md).

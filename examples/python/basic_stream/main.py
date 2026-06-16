@@ -37,6 +37,7 @@ View SHM with:   python examples/python/local_stream/main_viewer.py <stream-name
 """
 
 import ctypes
+import os
 import sys
 
 from pathlib import Path
@@ -98,6 +99,7 @@ PROTOCOL_MAP = {
     "webrtc": ovstream.ServerType.WEBRTC,
     "native": ovstream.ServerType.NATIVE,
     "shm": ovstream.ServerType.SHM,
+    "cudashm": ovstream.ServerType.CUDASHM,
 }
 
 
@@ -105,28 +107,52 @@ def parse_server_spec(spec: str):
     """Parse a `protocol[:detail]` spec into (ServerType, detail, label).
 
     `detail` is the port (int) for network protocols, the stream name
-    (str) for SHM, or 0 / "" if unspecified. The caller dispatches on
-    ServerType to decide which config field to populate.
+    (str) for SHM and CUDASHM, or 0 / "" if unspecified. The caller
+    dispatches on ServerType to decide which config field to populate.
     """
     parts = spec.split(":", 1)
     protocol = parts[0].lower()
 
     if protocol not in PROTOCOL_MAP:
         print(f"Unknown protocol: {protocol}")
-        print("  Protocols: webrtc, rtsp, native, shm")
+        print("  Protocols: webrtc, rtsp, native, shm, cudashm")
         sys.exit(1)
 
     server_type = PROTOCOL_MAP[protocol]
 
-    if server_type == ovstream.ServerType.SHM:
+    if server_type in (ovstream.ServerType.SHM, ovstream.ServerType.CUDASHM):
         stream_name = parts[1] if len(parts) > 1 else ""
-        label = f"SHM:{stream_name or '<auto>'}"
+        label = f"{protocol.upper()}:{stream_name or '<auto>'}"
         return server_type, stream_name, label
 
     port = int(parts[1]) if len(parts) > 1 else 0
     default_port = 8554 if protocol == "rtsp" else 49100
     label = f"{protocol.upper()}:{port or default_port}"
     return server_type, port, label
+
+
+def parse_ice_servers_env():
+    """Parse the optional OVSTREAM_ICE_SERVERS env var into a list of
+    WebRTCIceServer entries. Format::
+
+        OVSTREAM_ICE_SERVERS="stun:host:port|turn:host:port,user,pass"
+
+    Entries are separated by ``|``; within an entry, commas split into
+    ``urls,username,credential`` (credential is the password / token).
+    Empty or missing env var produces an empty list (no ICE servers).
+    """
+    raw = os.environ.get("OVSTREAM_ICE_SERVERS", "")
+    if not raw.strip():
+        return []
+    servers = []
+    for entry in raw.split("|"):
+        parts = entry.split(",", 2)
+        servers.append(ovstream.WebRTCIceServer(
+            urls=parts[0],
+            username=parts[1] if len(parts) > 1 else "",
+            credential=parts[2] if len(parts) > 2 else "",
+        ))
+    return servers
 
 
 def make_message_handler(srv):
@@ -159,6 +185,10 @@ def main():
     )
     # [/snippet:initialize-sdk]
 
+    ice_servers = parse_ice_servers_env()
+    if ice_servers:
+        print(f"Configured {len(ice_servers)} ICE server(s) from OVSTREAM_ICE_SERVERS")
+
     # Everything below init must tear down on the way out even when
     # cudaMalloc / start / render-loop raises, or we leak the OVSTREAM
     # refcount and the next test / retry inherits a half-initialized
@@ -178,12 +208,13 @@ def main():
             s.on_connection = lambda c, lbl=label: print(f"[{lbl}] Client {'connected' if c else 'disconnected'}")
 
             # Reverse-channel callbacks only fire on transports that have
-            # one. WebRTC, native, and SHM do; RTSP does not. Enumerated
-            # explicitly so a future backend without a reverse channel is
-            # not silently opted in.
+            # one. WebRTC, native, SHM, and CUDASHM do; RTSP does not.
+            # Enumerated explicitly so a future backend without a
+            # reverse channel is not silently opted in.
             if server_type in (ovstream.ServerType.WEBRTC,
                                ovstream.ServerType.NATIVE,
-                               ovstream.ServerType.SHM):
+                               ovstream.ServerType.SHM,
+                               ovstream.ServerType.CUDASHM):
                 s.on_message = make_message_handler(s)
                 # Match the C basic_stream's onInput shape: print
                 # KEYBOARD events with their key state, and mouse
@@ -209,9 +240,17 @@ def main():
             elif server_type == ovstream.ServerType.SHM:
                 if detail:
                     cfg.shm_stream_name = detail
+            elif server_type == ovstream.ServerType.CUDASHM:
+                if detail:
+                    cfg.cudashm_stream_name = detail
             else:  # WebRTC / Native
                 if detail:
                     cfg.webrtc_signal_port = detail
+                # ICE servers are WebRTC/native-only; the setter rejects
+                # other backends with NOT_SUPPORTED, so we only set them
+                # for the StreamSDK-backed transports.
+                if ice_servers:
+                    s.set_webrtc_ice_servers(ice_servers)
 
             s.start(cfg)
         # [/snippet:create-server]
@@ -220,6 +259,9 @@ def main():
                 print(f"[{label}] rtsp://localhost:{detail or 8554}/stream")
             elif server_type == ovstream.ServerType.SHM:
                 print(f"[{label}] attach with: python examples/python/local_stream/main_viewer.py "
+                      f"{detail or '<see ovstream log for auto name>'}")
+            elif server_type == ovstream.ServerType.CUDASHM:
+                print(f"[{label}] attach with: python examples/python/local_stream/main_cudashm_viewer.py "
                       f"{detail or '<see ovstream log for auto name>'}")
             else:
                 print(f"[{label}] signal port {detail or 49100}")

@@ -12,18 +12,22 @@
 // SHM, or any combination simultaneously.
 //
 // Usage:
-//   basic_stream                       (no args: WebRTC on default signal port 49100)
-//   basic_stream webrtc                (WebRTC on default signal port 49100)
-//   basic_stream webrtc:50000          (WebRTC on signal port 50000)
-//   basic_stream rtsp                  (RTSP on default port 8554)
-//   basic_stream rtsp:9000             (RTSP on port 9000)
-//   basic_stream shm                   (SHM, stream name auto: ovstream-<pid>)
-//   basic_stream shm:my-stream         (SHM with explicit stream name)
-//   basic_stream webrtc rtsp shm:demo  (three transports simultaneously)
+//   basic_stream                           (no args: WebRTC on default signal port 49100)
+//   basic_stream webrtc                    (WebRTC on default signal port 49100)
+//   basic_stream webrtc:50000              (WebRTC on signal port 50000)
+//   basic_stream rtsp                      (RTSP on default port 8554)
+//   basic_stream rtsp:9000                 (RTSP on port 9000)
+//   basic_stream shm                       (SHM, stream name auto: ovstream-<pid>)
+//   basic_stream shm:my-stream             (SHM with explicit stream name)
+//   basic_stream cudashm                   (CUDASHM, stream name auto)
+//   basic_stream cudashm:my-stream         (CUDASHM with explicit stream name)
+//   basic_stream webrtc rtsp shm:demo      (three transports simultaneously)
 //
-// For network specs the value after the colon is a port; for `shm` it is
-// the stream name a downstream `ovstream_shm_client` (or the bundled
-// `examples/python/local_stream/main_viewer.py`) attaches to.
+// For network specs the value after the colon is a port; for `shm` and
+// `cudashm` it is the stream name a downstream
+// `ovstream_shm_client` / `ovstream_cudashm_client` (or the bundled
+// `examples/python/local_stream/main_viewer.py` /
+// `main_cudashm_viewer.py`) attaches to.
 
 #include <ovstream/ovstream.h>
 #include <cuda_runtime.h>
@@ -177,6 +181,12 @@ bool parseServerSpec(const char* arg, ServerSpec& out)
         out.streamName = detail;
         out.label = "SHM:" + (out.streamName.empty() ? std::string("<auto>") : out.streamName);
     }
+    else if (protocol == "cudashm")
+    {
+        out.type = OVSTREAM_SERVER_CUDASHM;
+        out.streamName = detail;
+        out.label = "CUDASHM:" + (out.streamName.empty() ? std::string("<auto>") : out.streamName);
+    }
     else
     {
         return false;
@@ -210,11 +220,12 @@ int main(int argc, char** argv)
         {
             fprintf(stderr, "Unknown protocol: %s\n", argv[i]);
             fprintf(stderr, "Usage: %s <protocol[:detail]> [<protocol[:detail]> ...]\n", argv[0]);
-            fprintf(stderr, "  Protocols: webrtc, rtsp, native, shm\n");
+            fprintf(stderr, "  Protocols: webrtc, rtsp, native, shm, cudashm\n");
             fprintf(stderr, "  Examples:  %s webrtc\n", argv[0]);
             fprintf(stderr, "             %s webrtc:50000 rtsp\n", argv[0]);
             fprintf(stderr, "             %s webrtc rtsp:9000\n", argv[0]);
             fprintf(stderr, "             %s shm:my-stream\n", argv[0]);
+            fprintf(stderr, "             %s cudashm:my-stream\n", argv[0]);
             return 1;
         }
         specs.push_back(spec);
@@ -269,12 +280,13 @@ int main(int argc, char** argv)
         }
 
         // Reverse-channel callbacks only fire on transports that have
-        // one. WebRTC, native, and SHM do; RTSP does not. Enumerated
-        // explicitly so a future backend without a reverse channel is
-        // not silently opted in.
+        // one. WebRTC, native, SHM, and CUDASHM do; RTSP does not.
+        // Enumerated explicitly so a future backend without a reverse
+        // channel is not silently opted in.
         if (spec.type == OVSTREAM_SERVER_WEBRTC ||
             spec.type == OVSTREAM_SERVER_NATIVE ||
-            spec.type == OVSTREAM_SERVER_SHM)
+            spec.type == OVSTREAM_SERVER_SHM ||
+            spec.type == OVSTREAM_SERVER_CUDASHM)
         {
             if (!OVSTREAM_OK(ovstream_set_message_callback(inst.server, onMessage, nullptr)))
             {
@@ -321,6 +333,14 @@ int main(int argc, char** argv)
                 cfg.shm.stream_name.length = spec.streamName.size();
             }
         }
+        else if (spec.type == OVSTREAM_SERVER_CUDASHM)
+        {
+            if (!spec.streamName.empty())
+            {
+                cfg.cudashm.stream_name.ptr = spec.streamName.c_str();
+                cfg.cudashm.stream_name.length = spec.streamName.size();
+            }
+        }
         else // WebRTC / Native
         {
             if (spec.port)
@@ -346,6 +366,13 @@ int main(int argc, char** argv)
         else if (spec.type == OVSTREAM_SERVER_SHM)
         {
             printf("[%s] attach with: python examples/python/local_stream/main_viewer.py %s\n",
+                   inst.label->c_str(),
+                   spec.streamName.empty() ? "<see ovstream log for auto name>"
+                                           : spec.streamName.c_str());
+        }
+        else if (spec.type == OVSTREAM_SERVER_CUDASHM)
+        {
+            printf("[%s] attach with: python examples/python/local_stream/main_cudashm_viewer.py %s\n",
                    inst.label->c_str(),
                    spec.streamName.empty() ? "<see ovstream log for auto name>"
                                            : spec.streamName.c_str());

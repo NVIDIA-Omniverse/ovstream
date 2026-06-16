@@ -12,13 +12,14 @@
 // Streams video (animated starfield on the GPU) plus audio (48kHz stereo
 // PCM loaded from the bundled audio_sample_48khz.pcm file, looped).
 // Mouse movement hides stars near the cursor (WebRTC, native, and SHM).
-// Audio is silently dropped on RTSP and SHM (neither supports audio).
+// Audio is silently dropped on RTSP, SHM, and CUDASHM (none support audio).
 //
 // Usage:
 //   starfield_stream                       (no args: WebRTC on default signal port)
 //   starfield_stream webrtc                (WebRTC with mouse input)
 //   starfield_stream rtsp                  (RTSP on default port)
 //   starfield_stream shm:stars             (SHM with stream name 'stars')
+//   starfield_stream cudashm:stars         (CUDASHM with stream name 'stars')
 //   starfield_stream webrtc rtsp shm       (three transports simultaneously)
 
 #include <ovstream/ovstream.h>
@@ -320,6 +321,12 @@ bool parseServerSpec(const char* arg, ServerSpec& out)
         out.streamName = detail;
         out.label = "SHM:" + (out.streamName.empty() ? std::string("<auto>") : out.streamName);
     }
+    else if (protocol == "cudashm")
+    {
+        out.type = OVSTREAM_SERVER_CUDASHM;
+        out.streamName = detail;
+        out.label = "CUDASHM:" + (out.streamName.empty() ? std::string("<auto>") : out.streamName);
+    }
     else
     {
         return false;
@@ -351,7 +358,7 @@ int main(int argc, char** argv)
         {
             fprintf(stderr, "Unknown protocol: %s\n", argv[i]);
             fprintf(stderr, "Usage: %s <protocol[:detail]> [<protocol[:detail]> ...]\n", argv[0]);
-            fprintf(stderr, "  Protocols: webrtc, rtsp, native, shm\n");
+            fprintf(stderr, "  Protocols: webrtc, rtsp, native, shm, cudashm\n");
             return 1;
         }
         specs.push_back(spec);
@@ -436,6 +443,14 @@ int main(int argc, char** argv)
                 cfg.shm.stream_name.length = spec.streamName.size();
             }
         }
+        else if (spec.type == OVSTREAM_SERVER_CUDASHM)
+        {
+            if (!spec.streamName.empty())
+            {
+                cfg.cudashm.stream_name.ptr = spec.streamName.c_str();
+                cfg.cudashm.stream_name.length = spec.streamName.size();
+            }
+        }
         else // WebRTC / Native
         {
             if (spec.port) cfg.webrtc.signal_port = spec.port;
@@ -456,6 +471,15 @@ int main(int argc, char** argv)
         else if (spec.type == OVSTREAM_SERVER_SHM)
         {
             printf("[%s] attach with: python examples/python/local_stream/main_viewer.py %s\n",
+                   inst.label->c_str(),
+                   spec.streamName.empty() ? "<see ovstream log for auto name>"
+                                           : spec.streamName.c_str());
+            printf("[%s] Move the mouse in the viewer window to hide stars near the cursor.\n",
+                   inst.label->c_str());
+        }
+        else if (spec.type == OVSTREAM_SERVER_CUDASHM)
+        {
+            printf("[%s] attach with: python examples/python/local_stream/main_cudashm_viewer.py %s\n",
                    inst.label->c_str(),
                    spec.streamName.empty() ? "<see ovstream log for auto name>"
                                            : spec.streamName.c_str());

@@ -1,12 +1,22 @@
 # Starfield Stream (C)
 
-A richer streaming example: a CUDA-accelerated animated starfield plus a looping 48 kHz stereo PCM audio track. Mouse input hides stars near the cursor (WebRTC / native / SHM); audio is silently dropped on transports that don't support it (RTSP, SHM).
+A richer streaming example: a CUDA-accelerated animated starfield plus a looping 48 kHz stereo PCM audio track. Mouse input hides stars near the cursor (WebRTC / native / SHM / CUDASHM); audio is silently dropped on transports that don't support it (RTSP, SHM, CUDASHM).
 
 This example also demonstrates `ovstream_utils::Loop`, the optional frame-pacer bundled with ovstream as a header-only utility (`<ovstream_utils/loop.hpp>`).
 
 ## Prerequisites
 
-Same as [`basic_stream`](../basic_stream/README.md).
+### Linux
+
+```bash
+sudo apt-get install build-essential cmake
+```
+
+### Windows
+
+[Visual Studio 2019 or newer](https://visualstudio.microsoft.com/downloads/).
+
+A working CUDA toolkit (for `nvcc`) is required on both platforms.
 
 ## Build
 
@@ -22,10 +32,11 @@ The CMakeLists copies `data/audio_sample_48khz.pcm` next to the built executable
 Linux:
 
 ```bash
-./build/starfield_stream             # WebRTC default
-./build/starfield_stream rtsp        # RTSP
-./build/starfield_stream shm:stars   # SHM stream name "stars"
-./build/starfield_stream webrtc rtsp # combined
+./build/starfield_stream                  # WebRTC default
+./build/starfield_stream rtsp             # RTSP
+./build/starfield_stream shm:stars        # SHM (host-resident) with stream name "stars"
+./build/starfield_stream cudashm:stars    # CUDASHM (GPU-resident) with stream name "stars"
+./build/starfield_stream webrtc rtsp      # combined
 ```
 
 Windows:
@@ -36,7 +47,11 @@ Windows:
 
 ## View the stream
 
-Same client options as `basic_stream` — see that example's README.
+- **WebRTC** — open [`../../webrtc_client/index.html`](../../webrtc_client/index.html) in a browser, enter `127.0.0.1:49100`.
+- **RTSP** — `ffplay rtsp://localhost:8554/stream`, or VLC.
+- **SHM** — `python ../../python/local_stream/main_viewer.py stars` from the Python examples.
+- **CUDASHM** — `python ../../python/local_stream/main_cudashm_viewer.py stars`. Must run in a separate process from the producer: CUDA forbids `cudaIpcOpenMemHandle` in the process that called `cudaIpcGetMemHandle`.
+- **Native** — requires a native StreamSDK client; no browser equivalent.
 
 ## What it shows
 

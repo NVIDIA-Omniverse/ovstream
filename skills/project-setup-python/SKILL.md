@@ -1,14 +1,3 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: LicenseRef-NvidiaProprietary
-
-NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-property and proprietary rights in and to this material, related
-documentation and any modifications thereto. Any use, reproduction,
-disclosure or distribution of this material and related documentation
-without an express license agreement from NVIDIA CORPORATION or
-its affiliates is strictly prohibited.
--->
 ---
 name: project-setup-python
 description: Setting up a new Python project that uses ovstream. Use when user asks to create a new Python project, set up ovstream in Python, create a pyproject.toml, or scaffold a streaming app.
@@ -80,7 +69,8 @@ python main.py
 | Package | Purpose |
 |---------|---------|
 | `ovstream` | The streaming SDK itself. |
-| `opencv-python` | Required by [`examples/python/local_stream/main_viewer.py`](../../examples/python/local_stream/main_viewer.py) for an OpenCV-rendered SHM reader. |
+| `opencv-python` | Required by [`examples/python/local_stream/main_viewer.py`](../../examples/python/local_stream/main_viewer.py) for an OpenCV-rendered SHM reader, and by [`examples/python/local_stream/main_cudashm_viewer.py`](../../examples/python/local_stream/main_cudashm_viewer.py) for the equivalent CUDASHM (GPU-resident) reader. |
+| `numpy` | Required by `main_viewer.py` (zero-copy numpy view of SHM pixels) and `main_cudashm_viewer.py` (host buffer for the D2H copy used by display). |
 | `warp-lang` | If you produce CUDA frames with [NVIDIA Warp](https://developer.nvidia.com/warp-python). |
 | `ovrtx` | If you compose ovstream with the ovrtx renderer (see [`examples/python/ovrtx_stream`](../../examples/python/ovrtx_stream/)). |
 

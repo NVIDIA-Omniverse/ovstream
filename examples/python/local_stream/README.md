@@ -1,6 +1,11 @@
-# Local Stream (Python, SHM producer + reader)
+# Local Stream (Python, SHM / CUDASHM producer + readers)
 
-Same-machine zero-copy streaming via the SHM transport. The `main.py` script runs a producer that fills a 1280×720 CUDA buffer at 60 FPS and a colocated reader thread that attaches as `ovstream.ShmClient` and reports observed frames. `main_viewer.py` is an OpenCV-based visual reader that opens a window and renders each incoming frame.
+Same-machine zero-copy streaming. `main.py` runs an SHM producer that fills a 1280×720 CUDA buffer at 60 FPS and a colocated reader thread that attaches as `ovstream.ShmClient` and reports observed frames.
+
+Two OpenCV-based visual readers live in this directory:
+
+- **`main_viewer.py`** — attaches to a host-resident **SHM** stream via `ovstream.ShmClient`. Frame pixels arrive already on the host; OpenCV renders them directly.
+- **`main_cudashm_viewer.py`** — attaches to a GPU-resident **CUDASHM** stream via `ovstream.CudashmClient`. Frame pixels live in GPU memory; the viewer `cudaMemcpy2D` D2Hs each slot for display. A real consumer (sim kernel, GPU post-processing) would launch its own CUDA kernels against the imported device pointer directly and skip the host copy — the viewer's D2H is purely for screen display.
 
 ## Run the single-process demo
 
@@ -44,10 +49,35 @@ Multiple readers are supported — start as many shells as you like with the sam
 
 The C producer in [`../../c/local_stream`](../../c/local_stream/) interoperates with these Python readers; either side can play either role.
 
+## CUDASHM: GPU-resident pixels
+
+The CUDASHM transport keeps frames in GPU memory end-to-end. Run any of the pluggable examples (`basic_stream`, `warp_stream`, `ovrtx_stream`) with a `cudashm:<name>` spec to produce a CUDASHM stream, then attach `main_cudashm_viewer.py` in a separate shell:
+
+Shell 1 — start a CUDASHM producer:
+
+```bash
+uv run ../basic_stream/main.py cudashm:demo-cudashm
+```
+
+Shell 2 — attach the CUDASHM viewer:
+
+```bash
+uv run main_cudashm_viewer.py demo-cudashm
+```
+
+> [!IMPORTANT]
+> CUDASHM consumers **must run in a separate process** from the producer. CUDA forbids `cudaIpcOpenMemHandle` in the process that called `cudaIpcGetMemHandle`, so co-located producer-and-viewer in one Python script (the trick `main.py` plays for SHM) is not supported for CUDASHM.
+>
+> [!NOTE]
+> The CUDASHM ring's per-slot buffers are GPU-resident, so the producer and viewer processes need to be on the **same host** (or in containers with `--ipc=host --gpus all` on the same host). Cross-machine clients should use WebRTC, RTSP, or native.
+>
+> [!NOTE]
+> On a multi-GPU host the viewer must attach on the producer's GPU (CUDA IPC imports that device's memory). If the producer set a non-default `cuda_device`, pass the matching ordinal: `uv run main_cudashm_viewer.py demo-cudashm --device 1`. The viewer prints the producer's device after attaching, and a wrong device shows up as an attach error naming the right one.
+
 ## What it shows
 
-- `ovstream.Server(ServerType.SHM)` producer-side setup with `ServerConfig.shm_stream_name`.
-- `ovstream.ShmClient(stream_name)` consumer-side attach.
+- `ovstream.Server(ServerType.SHM)` producer-side setup with `ServerConfig.shm_stream_name` (and `ServerType.CUDASHM` + `cudashm_stream_name` for the GPU variant).
+- `ovstream.ShmClient(stream_name)` / `ovstream.CudashmClient(stream_name)` consumer-side attach.
 - `client.wait_frame(timeout_ms=...)` blocking pull, with `is_producer_alive()` watchdog.
-- Multi-reader semantics: many readers can attach to one producer concurrently.
-- `frame.as_numpy()` zero-copy view into the shared region (used by `main_viewer.py`; the headless `main.py` consumer reads dataclass fields only).
+- Multi-reader semantics: many readers can attach to one producer concurrently (true for both SHM and CUDASHM).
+- `frame.as_numpy()` zero-copy view into the shared region for SHM; `frame.device_ptr` raw CUDA device pointer for CUDASHM (the viewer D2Hs it; a real GPU consumer wouldn't).

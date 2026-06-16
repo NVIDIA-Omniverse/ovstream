@@ -1,14 +1,3 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: LicenseRef-NvidiaProprietary
-
-NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-property and proprietary rights in and to this material, related
-documentation and any modifications thereto. Any use, reproduction,
-disclosure or distribution of this material and related documentation
-without an express license agreement from NVIDIA CORPORATION or
-its affiliates is strictly prohibited.
--->
 ---
 name: error-handling
 description: Error checking patterns for both C and Python plus logging. Use when user asks about error handling, debugging ovstream failures, registering a log callback, or troubleshooting.
@@ -34,7 +23,7 @@ try:
         # ... stream ...
 except ovstream.OvstreamError as e:
     if e.status == ovstream.ApiStatus.NOT_SUPPORTED:
-        pass  # e.g. send_message on an RTSP server, or audio on RTSP/SHM
+        pass  # e.g. send_message on an RTSP server, or audio on RTSP/SHM/CUDASHM
     else:
         print(f"ovstream error [{e.status.name}]: {e}", file=sys.stderr)
 ```
@@ -88,6 +77,15 @@ static bool check(ovstream_result_t r, std::string_view operation) {
     return false;
 }
 ```
+
+### Lifecycle vs hot-loop
+
+The examples follow a deliberate two-tier pattern:
+
+- **Lifecycle calls** (`ovstream_initialize`, `ovstream_create_server`, `ovstream_start`, `ovstream_stop`, `ovstream_destroy_server`) check the result and exit-or-recover on failure. A failure here is structural and needs attention.
+- **Hot-loop calls** (`ovstream_stream_video`, `ovstream_stream_audio`, per-frame `ovstream_send_message`) discard the result with `(void)`. Per-frame failures are usually benign (no client connected yet, backend transient during disconnect) and surfacing them per-frame floods logs and obscures the real lifecycle errors that matter. The `log_callback` (next section) carries the underlying detail when you need it.
+
+In `examples/c/basic_stream/main.cu` you'll see this exactly: lifecycle calls go through `OVSTREAM_OK` checks; the per-frame call reads `(void)ovstream_stream_video(...)`. For per-frame diagnostics during development, switch to the `switch(r.status)` form above and set `log_min_severity = OVSTREAM_LOG_VERBOSE` to surface the underlying status without crashing the loop.
 
 ## Log callback
 

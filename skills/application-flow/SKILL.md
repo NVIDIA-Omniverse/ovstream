@@ -1,14 +1,3 @@
-<!--
-SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-SPDX-License-Identifier: LicenseRef-NvidiaProprietary
-
-NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-property and proprietary rights in and to this material, related
-documentation and any modifications thereto. Any use, reproduction,
-disclosure or distribution of this material and related documentation
-without an express license agreement from NVIDIA CORPORATION or
-its affiliates is strictly prohibited.
--->
 ---
 name: application-flow
 description: High-level overview of a typical ovstream application lifecycle. Use when user asks how to structure an ovstream program, what the main steps are, or how the pieces fit together.
@@ -23,12 +12,14 @@ Every ovstream application follows the same core lifecycle, whether in Python or
 ```
 1. Initialize SDK              → initialize / ovstream_initialize
 2. Create server               → Server(ServerType.X) / ovstream_create_server
-3. Register callbacks          → on_connection / on_message / on_input / on_unicode  (on_connection on all transports; on_message / on_input / on_unicode on WebRTC, native, SHM)
+3. Register callbacks          → on_connection / on_message / on_input / on_unicode  (on_connection on all transports; on_message / on_input / on_unicode on WebRTC, native, SHM, CUDASHM)
 4. Configure                   → ServerConfig(...) / ovstream_config_defaults + overrides
+4a. (Optional, WebRTC/native)  → server.set_webrtc_ice_servers([...]) for STUN/TURN NAT traversal
 5. Start                       → server.start(cfg) / ovstream_start
 6. Stream loop:
    a. Produce frame (CUDA buffer or pre-encoded bitstream)
    b. Submit frame             → server.stream_video / ovstream_stream_video
+   c. (Optional)                 server.set_webrtc_ice_servers([...]) again to refresh time-limited TURN credentials live
 7. Stop                        → server.stop / ovstream_stop
 8. Destroy server              → server.close / ovstream_destroy_server
 9. Shutdown SDK                → shutdown / ovstream_shutdown
@@ -90,7 +81,7 @@ If you're integrating ovstream into your own renderer, start from `ovrtx_stream/
 ## Common Pitfalls
 
 - **Callback timing.** Callbacks fire on internal network/SDK threads. Either keep callback bodies short and lock-free, or marshal to your main thread yourself. See `callbacks-and-input` skill.
-- **Buffer lifetime in streaming.** The CUDA buffer passed to `stream_video` is read asynchronously by the encoder on internal threads — it must stay valid until the frame has been consumed by the server, not just until `stream_video` returns. The recommended pattern is a long-lived buffer that you re-fill in place each frame; per-frame allocation requires waiting for the *next* `stream_video` call to return before freeing the previous buffer.
-- **RTSP has no input/message channel.** Registering `on_message` / `on_input` on an RTSP server is silent — the registration succeeds but the callbacks never fire. WebRTC, native, and SHM all carry a reverse channel; SHM does so via a local control socket / named pipe alongside the shared-memory region.
+- **Buffer lifetime in streaming.** `stream_video` stages the frame data into server-owned memory before returning, so the caller-supplied buffer is free to reuse or release immediately on return. Reusing a long-lived buffer across frames is still the common pattern because it avoids per-frame allocation; per-frame `std::vector`s or stack buffers are also legal. Producers that want to skip the staging copy and overlap their next render with the encoder's read should pass a CUDA event via `frame.sync`.
+- **RTSP has no input/message channel.** Registering `on_message` / `on_input` on an RTSP server is silent — the registration succeeds but the callbacks never fire. WebRTC, native, SHM, and CUDASHM all carry a reverse channel; SHM and CUDASHM do so via a local control socket / named pipe alongside their pixel transports.
 - **Don't forget the ref-counted shutdown.** Every `initialize` must be paired with a `shutdown`. Calling `initialize` twice and `shutdown` once leaks the backend lifetime.
 - See `error-handling` skill for robust error checking patterns in both languages.

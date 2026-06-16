@@ -107,6 +107,7 @@ PROTOCOL_MAP = {
     "webrtc": ovstream.ServerType.WEBRTC,
     "native": ovstream.ServerType.NATIVE,
     "shm": ovstream.ServerType.SHM,
+    "cudashm": ovstream.ServerType.CUDASHM,
 }
 
 
@@ -114,22 +115,22 @@ def parse_server_spec(spec: str):
     """Parse a `protocol[:detail]` spec into (ServerType, detail, label).
 
     `detail` is the port (int) for network protocols, the stream name
-    (str) for SHM, or 0 / "" if unspecified. The caller dispatches on
-    ServerType to decide which config field to populate.
+    (str) for SHM and CUDASHM, or 0 / "" if unspecified. The caller
+    dispatches on ServerType to decide which config field to populate.
     """
     parts = spec.split(":", 1)
     protocol = parts[0].lower()
 
     if protocol not in PROTOCOL_MAP:
         print(f"Unknown protocol: {protocol}")
-        print("  Protocols: webrtc, rtsp, native, shm")
+        print("  Protocols: webrtc, rtsp, native, shm, cudashm")
         sys.exit(1)
 
     server_type = PROTOCOL_MAP[protocol]
 
-    if server_type == ovstream.ServerType.SHM:
+    if server_type in (ovstream.ServerType.SHM, ovstream.ServerType.CUDASHM):
         stream_name = parts[1] if len(parts) > 1 else ""
-        label = f"SHM:{stream_name or '<auto>'}"
+        label = f"{protocol.upper()}:{stream_name or '<auto>'}"
         return server_type, stream_name, label
 
     port = int(parts[1]) if len(parts) > 1 else 0
@@ -311,9 +312,10 @@ def main():
         height, width = int(tensor.shape[0]), int(tensor.shape[1])
     print(f"Render output: {width}x{height} RGBA8", file=sys.stderr)
 
-    # Long-lived stream buffer. OVSTREAM reads from it on its own threads
-    # after stream_video returns, so reusing one buffer across frames is
-    # the documented pattern (see ovstream.VideoFrame lifetime contract).
+    # Long-lived stream buffer. ovstream stages each frame into server-
+    # owned memory before stream_video returns, so this buffer is free
+    # to mutate on the next iteration immediately; reusing one buffer
+    # across frames just saves a per-frame allocation.
     stream_buf = wp.zeros((height, width, 4), dtype=wp.uint8, device="cuda:0")
 
     # CUDA stream + event for the producer-side sync hint passed to
@@ -323,6 +325,12 @@ def main():
     draw_stream = wp.get_stream("cuda:0")
     draw_event  = wp.Event(device="cuda:0")
 
+    # ovrtx renders the frames in Warp's CUDA context on cuda:0. StreamSDK
+    # needs that exact context to read them: a device ordinal alone is not
+    # enough and fails the encode on a multi-GPU host. Pass it to ovstream
+    # via cuda_context (paired with cuda_device below).
+    stream_cuda_context = int(wp.get_device("cuda:0").context)
+
     ovstream.initialize()
     try:
         servers = []
@@ -331,21 +339,31 @@ def main():
             s.on_connection = lambda c, lbl=label: print(
                 f"[{lbl}] Client {'connected' if c else 'disconnected'}")
             # Input works on every transport with a reverse channel
-            # (WebRTC, native, SHM). RTSP has no input path. Enumerated
-            # explicitly so a future backend without a reverse channel is
-            # not silently opted in.
+            # (WebRTC, native, SHM, CUDASHM). RTSP has no input path.
+            # Enumerated explicitly so a future backend without a
+            # reverse channel is not silently opted in.
             if server_type in (ovstream.ServerType.WEBRTC,
                                ovstream.ServerType.NATIVE,
-                               ovstream.ServerType.SHM):
+                               ovstream.ServerType.SHM,
+                               ovstream.ServerType.CUDASHM):
                 s.on_input = make_input_handler()
 
-            cfg = ovstream.ServerConfig(width=width, height=height)
+            # Pin the encoder to cuda:0 (where the frames live) and hand it
+            # the producer's CUDA context. The default would be the display
+            # GPU on a multi-GPU host; cuda_device without cuda_context fails
+            # the encode for a producer that uses its own CUDA context.
+            cfg = ovstream.ServerConfig(width=width, height=height,
+                                        cuda_device=0,
+                                        cuda_context=stream_cuda_context)
             if server_type == ovstream.ServerType.RTSP:
                 if detail:
                     cfg.stream_port = detail
             elif server_type == ovstream.ServerType.SHM:
                 if detail:
                     cfg.shm_stream_name = detail
+            elif server_type == ovstream.ServerType.CUDASHM:
+                if detail:
+                    cfg.cudashm_stream_name = detail
             else:  # WebRTC / Native
                 if detail:
                     cfg.webrtc_signal_port = detail
@@ -356,6 +374,10 @@ def main():
                 print(f"[{label}] rtsp://localhost:{detail or 8554}/stream")
             elif server_type == ovstream.ServerType.SHM:
                 print(f"[{label}] attach with: python examples/python/local_stream/main_viewer.py "
+                      f"{detail or '<see ovstream log for auto name>'}  "
+                      "(left-drag orbit, wheel zoom, any key -> resume orbit)")
+            elif server_type == ovstream.ServerType.CUDASHM:
+                print(f"[{label}] attach with: python examples/python/local_stream/main_cudashm_viewer.py "
                       f"{detail or '<see ovstream log for auto name>'}  "
                       "(left-drag orbit, wheel zoom, any key -> resume orbit)")
             else:

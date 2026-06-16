@@ -165,20 +165,15 @@ int main()
     int frameNum = 0;
     const auto targetFrameTime = std::chrono::microseconds(1000000 / 30); // 30 FPS
 
-    // Double-buffer the encoded payloads so each frame's bytes remain
-    // valid until the next ovstream_stream_video call has been submitted
-    // (see lifetime contract in ovstream_types.h). A single per-iteration
-    // std::vector would be destroyed at scope end while the RTSP
-    // pipeline may still be reading from it on another thread.
-    std::vector<uint8_t> frameBuffers[2];
-
     // [snippet:pre-encoded-loop]
     while (g_running)
     {
         const auto frameStart = std::chrono::steady_clock::now();
 
-        auto& encodedFrame = frameBuffers[frameNum & 1];
-        encodedFrame = generateFakeH264Frame(1920, 1080, frameNum);
+        // Per-iteration std::vector is safe: ovstream_stream_video stages
+        // the bitstream into server-owned memory before returning, so
+        // the vector can go out of scope at the bottom of the loop.
+        std::vector<uint8_t> encodedFrame = generateFakeH264Frame(1920, 1080, frameNum);
 
         ovstream_video_frame_t frame = {};
         frame.buffer = encodedFrame.data();

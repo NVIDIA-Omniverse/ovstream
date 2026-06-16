@@ -9,7 +9,7 @@ This directory contains example projects demonstrating various features of ovstr
     <td align="center" width="50%">
       <a href="c/basic_stream/"><b>Basic Stream</b></a>
       <br>
-      <sub>Animated CUDA gradient streamed via WebRTC, RTSP, native, SHM, or any combination. The canonical "hello world".</sub>
+      <sub>Animated CUDA gradient streamed via WebRTC, RTSP, native, SHM, CUDASHM, or any combination. The canonical "hello world".</sub>
     </td>
     <td align="center" width="50%">
       <a href="c/pre_encoded_stream/"><b>Pre-Encoded Stream</b></a>
@@ -48,9 +48,9 @@ This directory contains example projects demonstrating various features of ovstr
   </tr>
   <tr>
     <td align="center" width="50%">
-      <a href="python/local_stream/"><b>Local Stream (SHM)</b></a>
+      <a href="python/local_stream/"><b>Local Stream (SHM + CUDASHM)</b></a>
       <br>
-      <sub>SHM producer + reader pair in one script, with a separate OpenCV-rendered visual reader (<code>main_viewer.py</code>).</sub>
+      <sub>SHM producer + reader pair in one script, plus separate OpenCV-rendered visual readers (<code>main_viewer.py</code> for host-resident SHM, <code>main_cudashm_viewer.py</code> for GPU-resident CUDASHM).</sub>
     </td>
     <td align="center" width="50%">
       <a href="python/ovrtx_stream/"><b>ovrtx + ovstream</b></a>
@@ -70,10 +70,11 @@ This directory contains example projects demonstrating various features of ovstr
 
 | Protocol | Default | Example arg |
 |---|---|---|
-| `webrtc` | signal port `49100` | `webrtc`, `webrtc:49200` |
-| `native` | signal port `49100` | `native`, `native:49200` |
-| `rtsp`   | port `8554`, mount `/stream` | `rtsp`, `rtsp:9000` |
-| `shm`    | example-defined segment name | `shm`, `shm:demo` |
+| `webrtc`  | signal port `49100` | `webrtc`, `webrtc:49200` |
+| `native`  | signal port `49100` | `native`, `native:49200` |
+| `rtsp`    | port `8554`, mount `/stream` | `rtsp`, `rtsp:9000` |
+| `shm`     | example-defined segment name | `shm`, `shm:demo` |
+| `cudashm` | example-defined segment name | `cudashm`, `cudashm:demo` |
 
 ```bash
 # Single transport
@@ -84,6 +85,10 @@ python python/basic_stream/main.py webrtc rtsp
 
 # Three transports, named SHM segment
 python python/warp_stream/main.py webrtc rtsp shm:demo
+
+# CUDASHM producer, then attach the GPU viewer from a separate shell
+python python/basic_stream/main.py cudashm:demo
+python python/local_stream/main_cudashm_viewer.py demo
 ```
 
 `pre_encoded_stream` (RTSP only) and `local_stream` (SHM only) are transport-specific by design and use their own positional-arg shapes — see each example's README.

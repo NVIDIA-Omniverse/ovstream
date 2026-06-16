@@ -16,7 +16,7 @@ The point of this example is that ovstream knows nothing about ovrtx and vice-ve
 uv run main.py
 ```
 
-Default: WebRTC on signal port 49100. Pass `rtsp`, `native`, or `shm` to override.
+Default: WebRTC on signal port 49100. Pass `rtsp`, `native`, `shm`, or `cudashm` to override. For `cudashm`, attach the GPU viewer in a separate shell: `uv run ../local_stream/main_cudashm_viewer.py <stream_name>`.
 
 ## Interact with the stream
 
@@ -33,6 +33,7 @@ RTSP clients see the auto-orbit only (RTSP has no input channel).
 - Two OV libraries composed by a single app, with no Kit / Carbonite involved.
 - ovrtx renders into a render product output that the script maps to a CUDA buffer.
 - The same CUDA buffer is handed to `ovstream.Server.stream_video()` every frame — zero-copy.
+- `ServerConfig(cuda_device=0, cuda_context=int(wp.get_device("cuda:0").context))` pins the encoder to the GPU the frames are produced on **and** hands it the producer's CUDA context. On a multi-GPU host the default encoder GPU is the display GPU (stream connects but never decodes); and because ovrtx renders in its own CUDA context, `cuda_device` alone is not enough — without `cuda_context` StreamSDK fails the encode with `CUDA error invalid argument`.
 - Input events from the WebRTC client are routed back into the ovrtx camera transform via `ovstream.Server.on_input`.
 - Pacing via `ovstream_utils.Loop`.
 

@@ -1,9 +1,10 @@
 # NVIDIA ovstream
 
-ovstream is a lightweight C and Python SDK for live streaming Omniverse content, allowing developers to add real-time video streaming to their applications without depending on Kit or Carbonite.
+ovstream is a lightweight C and Python SDK for streaming application-rendered pixels, audio, messages, and input events from GPU applications to interactive clients.
 
-ovstream is the streaming building block of the broader Omniverse libraries effort: pair it with [ovrtx](https://github.com/NVIDIA-Omniverse/ovrtx) (or any other CUDA-buffer producer) to ship interactive rendered content over WebRTC, RTSP, the low-latency native protocol, or local shared-memory in a few lines of code.
+Use ovstream when you have a renderer, CUDA producer, tensor producer, or pre-encoded video source and need to deliver an interactive live view to a browser, native client, RTSP client, or same-machine desktop process. Pair it with [ovrtx](https://github.com/NVIDIA-Omniverse/ovrtx), or any compatible CUDA-buffer producer, to ship interactive rendered content over WebRTC, RTSP, the low-latency native protocol, or local shared memory.
 
+* [Supported inputs and outputs](#supported-inputs-and-outputs)
 * [Get started in Python](#getting-started-in-python)
 * [Get started in C](#getting-started-in-c)
 
@@ -12,11 +13,28 @@ ovstream is the streaming building block of the broader Omniverse libraries effo
 
 ## Features
 
-* **Four transports in one library** — WebRTC (browser-friendly), RTSP (industry-standard), native (low-latency StreamSDK), and SHM (same-machine zero-copy). Pick one at runtime, run several simultaneously, no separate builds.
+* **Five transports in one library** — WebRTC (browser-friendly), RTSP (industry-standard), native (low-latency StreamSDK), SHM (same-machine host-resident zero-copy), and CUDASHM (same-host GPU-resident zero-copy over CUDA IPC). Pick one at runtime, run several simultaneously, no separate builds.
 * **Zero-copy CUDA buffer streaming** — push raw BGRA8 frames directly from CUDA memory; the SDK encodes on the GPU via NVENC.
 * **Pre-encoded passthrough** — stream existing H.264 / H.265 / AV1 bitstreams without re-encoding, for file replay or upstream-encoded sources.
-* **Bidirectional messaging and input** (WebRTC / native / SHM) — receive keyboard, mouse, and Unicode events from connected clients; send messages back.
+* **Bidirectional messaging and input** (WebRTC / native / SHM / CUDASHM) — receive keyboard, mouse, and Unicode events from connected clients; send messages back.
+* **STUN / TURN for WebRTC NAT traversal** — supply ICE servers via a single `set_webrtc_ice_servers` call before or after `start`; refresh time-limited TURN credentials live without dropping connected clients.
 * **Self-contained** — no Kit, no Carbonite, no Omniverse app required. The wheel bundles its native dependencies (StreamSDK, GStreamer, the bundled `gstnvenc` plugin); `pip install ovstream` is enough.
+
+## Supported inputs and outputs
+
+The diagram below summarizes the current application inputs, SDK surfaces, transport backends, and consumers supported by ovstream.
+
+![ovstream supported inputs and outputs](docs/images/ovstream-supported-inputs-and-outputs.png)
+
+For text readers, search, and AI coding agents, the same contract is summarized below:
+
+| What goes in | ovstream surface | What comes out |
+| --- | --- | --- |
+| BGRA8 CUDA frames from a renderer or application | `stream_video` | WebRTC, RTSP, native, or SHM video delivery |
+| DLPack tensor frames from Warp, PyTorch, CuPy, JAX, or another producer | `stream_video` | Transport-selected frame stream |
+| Pre-encoded H.264, H.265, AV1, or custom payloads | `stream_video` | Passthrough video stream without re-encoding |
+| 16-bit PCM audio | `stream_audio` | WebRTC or native audio stream |
+| Application messages, metadata, keyboard, mouse, and Unicode input | callbacks and messaging APIs | Server-side application events and client responses |
 
 ## Getting Started in Python
 
@@ -35,7 +53,7 @@ python main.py
 
 The basic example creates a WebRTC server with signaling port 49100 (the media stream port defaults to 47998), allocates a CUDA buffer, animates a gradient fill, and pushes frames at 60 FPS. Open `examples/webrtc_client/index.html` in a browser and enter `127.0.0.1:49100` to view the stream.
 
-Pass `rtsp`, `native`, or `shm` as arguments to switch transport — see the [examples README](examples/README.md) for the full menu.
+Pass `rtsp`, `native`, `shm`, or `cudashm` as arguments to switch transport — see the [examples README](examples/README.md) for the full menu.
 
 ## Getting Started in C
 
@@ -87,7 +105,7 @@ The libraries require a compatible NVIDIA RTX-capable GPU with a compatible NVID
 
 ## Documentation
 
-The public C API is fully documented inline in the header files (`ovstream.h`, `ovstream_types.h`, `ovstream_shm_client.h`) shipped under `include/ovstream/` inside every release archive — each function carries its argument types, return semantics, thread-safety rules, and lifetime contracts as Doxygen-style comments. The Python API mirrors the C API and is documented via docstrings on the wheel-installed `ovstream` package (run `help(ovstream)` after `pip install ovstream`).
+The public C API is fully documented inline in the header files (`ovstream.h`, `ovstream_types.h`, `ovstream_shm_client.h`, `ovstream_cudashm_client.h`) shipped under `include/ovstream/` inside every release archive — each function carries its argument types, return semantics, thread-safety rules, and lifetime contracts as Doxygen-style comments. The Python API mirrors the C API and is documented via docstrings on the wheel-installed `ovstream` package (run `help(ovstream)` after `pip install ovstream`).
 
 For runnable code, see [examples](examples/README.md). For AI-coding-agent-friendly task recipes, see [skills](skills/README.md).
 

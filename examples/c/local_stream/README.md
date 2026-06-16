@@ -4,7 +4,17 @@ A minimal SHM (shared-memory) producer in C. Allocates a 1280×720 CUDA buffer, 
 
 ## Prerequisites
 
-Same as [`basic_stream`](../basic_stream/README.md).
+### Linux
+
+```bash
+sudo apt-get install build-essential cmake
+```
+
+### Windows
+
+[Visual Studio 2019 or newer](https://visualstudio.microsoft.com/downloads/).
+
+A working CUDA toolkit (for `nvcc`) is required on both platforms.
 
 ## Build
 
@@ -42,6 +52,9 @@ python ../../python/local_stream/main_viewer.py local_stream
 ```
 
 For a C / C++ consumer, see the `<ovstream/ovstream_shm_client.h>` API (`ovstream_shm_client_create`, `_wait_frame`, `_release_frame`, `_is_producer_alive`) and the `shm-consumers` skill.
+
+> [!NOTE]
+> This example is intentionally **SHM-only** (host-resident pixels). For the GPU-resident CUDASHM transport, use any of the pluggable examples with a `cudashm:<name>` spec instead — e.g. `./build/basic_stream cudashm:my-stream` from [`../basic_stream`](../basic_stream/). The CUDASHM consumer is `examples/python/local_stream/main_cudashm_viewer.py`; see the `cudashm-consumers` skill for the C client API (`<ovstream/ovstream_cudashm_client.h>`).
 
 ## What it shows
 
