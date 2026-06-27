@@ -30,6 +30,7 @@ skills/
   error-handling/SKILL.md
   shm-consumers/SKILL.md
   cudashm-consumers/SKILL.md
+  native-consumers/SKILL.md
 ```
 
 ## SKILL.md Format

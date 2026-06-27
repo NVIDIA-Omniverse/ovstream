@@ -14,8 +14,8 @@
 // Run a reader in another shell to observe frames:
 //   python examples/python/local_stream/main.py local_stream --reader
 //
-// Or attach from your own consumer using the ovstream_shm_client_*
-// API in <ovstream/ovstream_shm_client.h>.
+// Or attach from your own consumer using the ovstream_client_*
+// API in <ovstream/ovstream_client.h> with OVSTREAM_CLIENT_SHM.
 
 #include <ovstream/ovstream.h>
 #include <cuda_runtime.h>

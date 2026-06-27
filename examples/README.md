@@ -60,9 +60,29 @@ This directory contains example projects demonstrating various features of ovstr
   </tr>
 </table>
 
-## Web Client
+## Client Examples
 
-[`webrtc_client/`](webrtc_client/) — drop-in browser client for the WebRTC transport. No build step, no npm; just open `index.html`.
+Consumer-side examples — they attach to a running server (started by any producer above) and pull frames, rather than producing frames themselves.
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <a href="webrtc_client/"><b>WebRTC Client</b></a>
+      <br>
+      <sub>Drop-in browser client for the WebRTC transport. No build step, no npm; just open <code>index.html</code>.</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="c/native_client/"><b>Native Client (consumer, C)</b></a>
+      <br>
+      <sub>Headless C consumer of a native (StreamSDK) stream over the network: decodes frames client-side via StreamSDK's NvStreamingMedia to host BGRA8 and writes one to PPM. Links only <code>ovstream::ovstream_client</code>. Needs an NVIDIA GPU on the consumer.</sub>
+    </td>
+    <td align="center" width="33%">
+      <a href="python/native_client/"><b>Native Client (viewer, Python)</b></a>
+      <br>
+      <sub>OpenCV viewer for a native (StreamSDK) stream over the network: decodes client-side via StreamSDK's NvStreamingMedia and forwards mouse / keyboard back to the server. Lifts the same-host / same-GPU constraint; needs an NVIDIA GPU on the consumer.</sub>
+    </td>
+  </tr>
+</table>
 
 ## Protocol selection (CLI)
 

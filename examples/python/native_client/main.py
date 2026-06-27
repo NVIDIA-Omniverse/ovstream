@@ -17,28 +17,28 @@
 # ]
 # ///
 
-"""Display the frames from an ovstream SHM stream in a window.
+"""Display the frames from an ovstream NATIVE (StreamSDK) server in a window.
 
-Attaches to a running SHM producer by stream name, pulls BGRA8 frames
-straight out of the shared region (zero-copy), and renders them with
-OpenCV's `cv2.imshow`. OpenCV is already BGR-native, so BGRA frames
-display without a color swap.
+Connects to a running native server over the network, receives the encoded
+video stream, decodes it client-side via StreamSDK's NvStreamingMedia into host
+BGRA8 frames, and renders them with OpenCV's `cv2.imshow`. Unlike the SHM/CUDASHM clients this
+needs neither the same host nor the same GPU as the producer -- only an NVIDIA
+GPU on this (the consumer) machine for the decode.
 
-The viewer also forwards mouse and keyboard events from the OpenCV
-window back to the producer over the SHM control channel. Producers
-that registered an input callback (e.g. `starfield_stream shm:...` or
-`ovrtx_stream shm:...`) see exactly the same events they'd see from
-a WebRTC client, so SHM is an interactive transport in practice.
+Mouse and keyboard events from the OpenCV window are forwarded to the server
+over the input stream, so a producer that registered an input callback (e.g.
+`basic_stream native` or `ovrtx_stream native`) sees the same events it would
+from any other client.
 
-Run this alongside any SHM producer -- e.g. `local_stream` (C example)
-or `main.py` from this directory started without `--reader`. Both sides
-must agree on the stream name (default: `local_stream`).
+Run a native server first, e.g.:
+    python ../basic_stream/main.py native
 
-Requires: pip install opencv-python numpy
+Requires: pip install opencv-python numpy. Needs an NVIDIA GPU + driver.
 
 Usage:
-    python main_viewer.py                # default stream name 'local_stream'
-    python main_viewer.py demo-stream    # explicit stream name
+    python main.py                       # connect to 127.0.0.1:49100
+    python main.py 10.0.0.5              # connect to a remote server
+    python main.py 10.0.0.5 --signal-port 50000
 
 Press 'q' or close the window to exit.
 """
@@ -54,56 +54,51 @@ except ImportError:
     sys.exit(1)
 
 import ovstream
+from ovstream import Client, ClientType
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("stream_name", nargs="?", default="local_stream",
-                        help="SHM stream identifier (must match the producer)")
+    parser.add_argument("server_ip", nargs="?", default="127.0.0.1",
+                        help="native server address (default 127.0.0.1)")
+    parser.add_argument("--signal-port", type=int, default=0,
+                        help="signaling port (0 = default 49100)")
+    parser.add_argument("--stream-port", type=int, default=0,
+                        help="media/streaming port (0 = default 47999)")
     parser.add_argument("--retry-seconds", type=float, default=10.0,
-                        help="how long to wait for the producer if it isn't running yet")
+                        help="how long to keep retrying the connection")
     args = parser.parse_args()
 
-    # Wait briefly for the producer to come up. This makes the
-    # producer/viewer launch order forgiving -- you can start either
-    # one first.
+    # nvstConnectToServer fails synchronously if the server isn't reachable;
+    # retry so the launch order is forgiving.
     deadline = time.monotonic() + args.retry_seconds
     client = None
     last_err = ""
     while time.monotonic() < deadline:
         try:
-            client = ovstream.Client(ovstream.ClientType.SHM,
-                                     stream_name=args.stream_name)
+            client = Client(ClientType.NATIVE, server_ip=args.server_ip,
+                            signal_port=args.signal_port, stream_port=args.stream_port)
             break
         except ovstream.OvstreamError as e:
             last_err = str(e)
-            time.sleep(0.2)
+            time.sleep(0.5)
     if client is None:
-        sys.stderr.write(f"Failed to attach to '{args.stream_name}' after "
+        sys.stderr.write(f"Failed to connect to {args.server_ip} after "
                          f"{args.retry_seconds:.1f}s: {last_err}\n")
         return 1
 
-    print(f"Attached to '{args.stream_name}'. Press 'q' to exit.")
-    window = f"ovstream: {args.stream_name}"
-    # cv2.WINDOW_NORMAL lets the user resize; the BGRA frame is uploaded
-    # at its native dimensions every frame.
+    print(f"Connected to {args.server_ip}. Press 'q' to exit.")
+    window = f"ovstream native: {args.server_ip}"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
 
-    # Latest frame's dimensions, kept in a dict so the mouse callback
-    # (which can fire on a separate Qt/GTK event thread inside OpenCV)
-    # always uses the producer's current resolution. data / data2 on
-    # MOVE events feed the producer's normalization x/data, y/data2,
-    # so they must match the frame the cursor was over.
     dims = {"width": 0, "height": 0}
-
     cv2.setMouseCallback(window, _make_mouse_callback(client, dims))
 
     try:
         while client.is_alive():
             frame = client.wait_frame(timeout_ms=500)
             if frame is None:
-                # Timeout; check window state and loop again.
                 if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
                     break
                 continue
@@ -111,17 +106,10 @@ def main():
             dims["width"] = frame.width
             dims["height"] = frame.height
 
-            # Zero-copy view into shared memory. The pitch may include
-            # padding past `width` to align rows; trim to the actual
-            # pixel rectangle before display.
-            arr = frame.as_numpy()                       # (H, pitch//4, 4) uint8 BGRA
-            visible = arr[:, :frame.width, :]            # (H, W, 4) BGRA
+            arr = frame.as_numpy()             # (H, pitch//4, 4) uint8 BGRA
+            visible = arr[:, :frame.width, :]  # (H, W, 4) BGRA
             cv2.imshow(window, visible)
 
-            # waitKey is required for cv2.imshow to actually pump
-            # window events; 1 ms is enough to keep a 60 FPS feed
-            # responsive. Return is -1 when no key was pressed; anything
-            # else is a Unicode-ish code point we forward as a key DOWN.
             raw_key = cv2.waitKey(1)
             if raw_key != -1:
                 key = raw_key & 0xFF
@@ -132,7 +120,7 @@ def main():
                 break
 
         if not client.is_alive():
-            print("Producer stopped.")
+            print("Connection closed.")
     finally:
         cv2.destroyAllWindows()
         client.close()
@@ -141,13 +129,9 @@ def main():
 
 
 def _make_mouse_callback(client, dims):
-    """Build the cv2 mouse callback that forwards events to the producer.
-
-    `dims` is a shared mutable dict carrying the latest frame's
-    width/height so MOVE events report the producer's coordinate space.
-    Send failures (e.g. producer just stopped) are swallowed -- a dead
-    SHM connection is detected in the main loop via is_alive.
-    """
+    """cv2 mouse callback forwarding events to the server. `dims` carries the
+    latest frame's width/height so MOVE events report the server's coordinate
+    space. Send failures (e.g. the connection just dropped) are swallowed."""
     button_map = {
         cv2.EVENT_LBUTTONDOWN: (ovstream.MouseButton.LEFT,   ovstream.KeyState.DOWN),
         cv2.EVENT_LBUTTONUP:   (ovstream.MouseButton.LEFT,   ovstream.KeyState.UP),
@@ -168,7 +152,6 @@ def _make_mouse_callback(client, dims):
         h = dims["height"]
         if w == 0 or h == 0:
             return
-
         if event == cv2.EVENT_MOUSEMOVE:
             _send(ovstream.InputEvent(
                 type=ovstream.InputEventType.MOUSE,
@@ -189,37 +172,13 @@ def _make_mouse_callback(client, dims):
                     button_state=state,
                 ),
             ))
-        elif event == cv2.EVENT_MOUSEWHEEL:
-            # OpenCV packs the signed wheel delta into the upper 16 bits
-            # of `flags`. Windows convention is 120 units per detent;
-            # ovstream / StreamSDK report `scroll_y` in detents.
-            # This packing is Windows-only; on Linux/X11 OpenCV's GUI
-            # backend doesn't deliver MOUSEWHEEL events, so this branch
-            # silently no-ops there.
-            delta = (flags >> 16) & 0xFFFF
-            if delta & 0x8000:
-                delta -= 0x10000
-            _send(ovstream.InputEvent(
-                type=ovstream.InputEventType.MOUSE,
-                mouse=ovstream.MouseEvent(
-                    type=ovstream.MouseEventType.WHEEL,
-                    modifiers=0, x=x, y=y, data=0, data2=0,
-                    button_state=ovstream.KeyState.UP,
-                    scroll_y=delta / 120.0,
-                ),
-            ))
 
     return on_mouse
 
 
 def _forward_key(client, key_code: int) -> None:
-    """Forward a single cv2.waitKey code as a key-DOWN event.
-
-    cv2.waitKey doesn't surface key release, only press, so we never
-    emit KeyState.UP. That's enough for the existing producer-side
-    "any key resets" handlers; producers that need press/release pairs
-    will want a different input source than an OpenCV viewer.
-    """
+    """Forward a single cv2.waitKey code as a key-DOWN event (cv2 doesn't
+    surface key release)."""
     try:
         client.send_input_event(ovstream.InputEvent(
             type=ovstream.InputEventType.KEYBOARD,

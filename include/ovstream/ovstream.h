@@ -425,7 +425,7 @@ OVSTREAM_API ovstream_result_t ovstream_set_connection_callback(ovstream_server_
 //                An empty view (`length == 0`, with `ptr` either
 //                NULL or non-NULL) is rejected by this server-to-
 //                client direction. Note: the client-to-server
-//                counterpart `ovstream_shm_client_send_message`
+//                counterpart `ovstream_client_send_message`
 //                does accept empty payloads -- the two directions
 //                are intentionally asymmetric (an empty server
 //                broadcast has no useful semantics; an empty
@@ -473,8 +473,10 @@ OVSTREAM_API ovstream_result_t ovstream_set_message_callback(ovstream_server_t* 
 //
 // Fires on WebRTC, native, and SHM (which delivers input events
 // over its local control channel); RTSP has no input channel so
-// the callback never fires there. Input events are delivered on
-// an internal thread; the callback body is responsible for any
+// the callback never fires there. Each event is a tagged union
+// over keyboard / mouse / gamepad / touch variants (see
+// `ovstream_input_event_t`). Input events are delivered on an
+// internal thread; the callback body is responsible for any
 // thread marshaling it needs. See
 // `ovstream_set_connection_callback` for registration semantics.
 //

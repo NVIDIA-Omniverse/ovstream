@@ -3,8 +3,8 @@
 **Scope:** what the SDK looks like from 30,000 feet, and why the
 pieces fit together the way they do. The public API contract lives in
 the headers (`include/ovstream/ovstream.h`,
-`include/ovstream/ovstream_types.h`, and the slim consumer-side
-`include/ovstream/ovstream_shm_client.h`) and the Python docstrings
+`include/ovstream/ovstream_types.h`, and the consumer-side
+`include/ovstream/ovstream_client.h`) and the Python docstrings
 (`python/ovstream/`). **Those are the source of truth** — when
 this document and the headers disagree, the headers win. Release
 history lives in `CHANGELOG.md`.
@@ -31,6 +31,7 @@ serve as the Python API reference.
     - [WebRTC / native](#webrtc--native-backend)
     - [SHM (shared memory)](#shm-shared-memory-backend)
     - [CUDASHM (CUDA shared memory)](#cudashm-cuda-shared-memory-backend)
+    - [NATIVE consumer client](#native-consumer-client)
   - [Common gotchas](#common-gotchas)
     - [CUDA synchronization on `stream_video`](#cuda-synchronization-on-stream_video)
     - [BGRA channel order, NOT RGBA](#bgra-channel-order-not-rgba)
@@ -333,9 +334,10 @@ definition.
   the next ring slot, then publishes the slot index via the same
   atomic-sequence protocol as SHM. Same-host (or
   same-container-host) consumers attach with
-  `ovstream_cudashm_client_create`, import every IPC handle once,
-  and read pixels directly from the imported device pointer when
-  `wait_frame` returns -- no device-to-host copy on either side.
+  `ovstream_create_client(OVSTREAM_CLIENT_CUDASHM, …)`, import every
+  IPC handle once, and read pixels directly from the imported device
+  pointer when `wait_frame` returns -- no device-to-host copy on
+  either side.
 - The intended use case is "render-output → simulation kernel
   zero-copy" workloads: the consumer's CUDA kernel reads the slot
   pointer directly with no encoder, no network, and no host
@@ -351,7 +353,7 @@ definition.
   and interfere with StreamSDK's setup if a WebRTC / native server
   starts in the same process afterwards. The selected device ordinal is
   stamped into `RegionHeader::gpuDeviceOrdinal`; the consumer reads it
-  back via `ovstream_cudashm_client_get_producer_device` and must do its
+  back via `ovstream_client_get_producer_device` and must do its
   CUDA work on that device (or a peer-capable one), since
   `cudaIpcOpenMemHandle` imports the producer's memory.
 - Accepts the same input modes as SHM (`OVSTREAM_VIDEO_INPUT_CUDA`,
@@ -364,16 +366,67 @@ definition.
   read kernel before the producer's ring wraps onto the same slot.
   `cudashm.slot_count` (default 4, range [2, 8]) is the tuning knob;
   each slot costs `width * height * 4` bytes of GPU memory.
-- Consumer-side entry points: C / C++ consumers link the slim
-  `ovstream_cudashm_client` shared library and include
-  `<ovstream/ovstream_cudashm_client.h>` —
-  `ovstream_cudashm_client_create`, `_wait_frame`,
-  `_is_producer_alive`, `_send_input_event`, `_send_message`,
-  `_destroy`. Python consumers use `ovstream.CudashmClient`
-  (defined in `ovstream/_cudashm_client.py`), which wraps the same
-  C API and surfaces `CudashmFrame` with the imported device
-  pointer. See `skills/cudashm-consumers/SKILL.md` for a reader
-  walkthrough.
+- Consumer-side entry points: C / C++ consumers link the
+  `ovstream_client` shared library and include
+  `<ovstream/ovstream_client.h>` —
+  `ovstream_create_client(OVSTREAM_CLIENT_CUDASHM, …)`,
+  `ovstream_client_wait_frame`, `ovstream_client_is_alive`,
+  `ovstream_client_send_input_event`, `ovstream_client_send_message`,
+  `ovstream_destroy_client`. Python consumers use
+  `ovstream.Client(ovstream.ClientType.CUDASHM, stream_name=…)`, which
+  wraps the same C API and surfaces an `ovstream.Frame` with the
+  imported device pointer in `frame.device_ptr`. See
+  `skills/cudashm-consumers/SKILL.md` for a reader walkthrough.
+
+### NATIVE consumer client
+
+The SHM and CUDASHM consumers above read same-machine pixels with no
+decode. The native consumer is the third backend of the unified client
+and the one that crosses the network. It attaches to a running
+`OVSTREAM_SERVER_NATIVE` (StreamSDK / NVSS) producer, receives the
+encoded video stream, and decodes it **client-side via StreamSDK's
+NvStreamingMedia** inbound-video API (which uses NVDEC on NVIDIA GPUs),
+delivering host BGRA8 frames directly. On each `wait_frame` the consumer
+gets a host pointer (`frame.data`) into a client-owned decode buffer that
+is recycled on the next call.
+
+- **Cross-machine.** Unlike SHM / CUDASHM, the native consumer needs
+  neither the same host nor the same GPU as the producer — producer and
+  consumer can run on two different machines. The trade is the encode +
+  decode latency the local transports avoid, plus an NVIDIA GPU + driver
+  on the consumer for the NvStreamingMedia decode (NVCodec uses NVDEC on
+  NVIDIA GPUs). NvStreamingMedia outputs BGRA8 directly.
+- **Connection config.** `native.server_ip` is required;
+  `native.signal_port` (default `49100`) and `native.stream_port`
+  (default `47999`) match the server's signaling and media ports;
+  `native.cuda_device` (`-1` = device 0) selects the GPU the client
+  decodes / converts on. `ovstream_client_get_producer_device` returns
+  that decode device.
+- **Connect is synchronous.** The underlying StreamSDK connect fails
+  immediately when the server isn't reachable yet, so consumers started
+  before their producer wrap the create call in a short retry loop (the
+  `native_client` examples use a ~10 s deadline).
+- **Reverse channel.** `send_input_event` / `send_message` /
+  `send_unicode` and the server → client message callback all work,
+  routed through the StreamSDK input / message channels — the producer's
+  regular callbacks fire for native events the same as any other
+  transport. Keyboard / mouse / unicode forward; gamepad does not on the
+  native path. Message / unicode payloads cap at 65535 bytes (the
+  StreamSDK custom-message limit).
+- **Consumer-side entry points and dependency.** C / C++ consumers link
+  the `ovstream_client` library and include `<ovstream/ovstream_client.h>`
+  — `ovstream_create_client(OVSTREAM_CLIENT_NATIVE, …)`,
+  `ovstream_client_wait_frame`, `ovstream_client_is_alive`,
+  `ovstream_client_send_input_event`, `ovstream_client_send_message`,
+  `ovstream_destroy_client`. Python consumers use
+  `ovstream.Client(ovstream.ClientType.NATIVE, server_ip=…)`, which wraps
+  the same C API and surfaces an `ovstream.Frame` with host pixels in
+  `frame.data` / `frame.as_numpy()`. The native backend additionally
+  carries a runtime dependency on the bundled `NvStreamingMedia` +
+  `NVCodec` libraries for the decode and `StreamClientShared` for the
+  StreamSDK session (SHM / CUDASHM need only OS shared memory, plus the
+  CUDA runtime for CUDASHM). See
+  `skills/native-consumers/SKILL.md` for a reader walkthrough.
 
 ### Mapping user `log_min_severity` to dependencies
 
@@ -528,7 +581,7 @@ The region is a single contiguous mapping with the following structure:
 |---:|---:|---|---|
 | 0 | 4 | `magic` | `0x4D53564F` (`'OVSM'` LE). Reject if mismatched. |
 | 4 | 4 | `protocolVersion` | Currently `2`. Reject if mismatched. |
-| 8 | 4 | `pixelFormat` | Currently `1` = `OVSTREAM_SHM_FORMAT_BGRA8`. Other values reserved. |
+| 8 | 4 | `pixelFormat` | Currently `1` = `OVSTREAM_PIXEL_FORMAT_BGRA8`. Other values reserved. |
 | 12 | 4 | `slotCount` | Ring depth; `2..8`. |
 | 16 | 4 | `maxWidth` | Width capacity (px). |
 | 20 | 4 | `maxHeight` | Height capacity (px). |
@@ -617,7 +670,7 @@ The control channel is line-delimited UTF-8 (terminator: `\n`, optional precedin
 Two line-length tiers apply:
 
 - **Protocol-verb lines** (`ATTACH`, `ATTACH_OK`, `ATTACH_REJECTED`, `DETACH`, `STOPPED`, `INPUT_KEY`, `INPUT_MOUSE`, `INPUT_GAMEPAD`) are ≤ 256 bytes. Receivers can read into a fixed 256-byte buffer.
-- **Data-bearing lines** (`MESSAGE`, `UNICODE`) have no public size cap. The reference implementation grows its line buffer up to a 16 MiB defense-in-depth ceiling per line; third-party readers should size their buffers accordingly (a small fixed window won't suffice once the producer sends a large `MESSAGE`).
+- **Data-bearing lines** (`MESSAGE`, `UNICODE`, `INPUT_TOUCH`) have no public size cap. The reference implementation grows its line buffer up to a 16 MiB defense-in-depth ceiling per line; third-party readers should size their buffers accordingly (a small fixed window won't suffice once the producer sends a large `MESSAGE` or a multi-contact `INPUT_TOUCH`).
 
 ### 5.1 Client → Server
 
@@ -628,6 +681,7 @@ Two line-length tiers apply:
 | `INPUT_KEY keyCode=<u32> scanCode=<u32> modifiers=<u32> state=<u32> tsUs=<u64>` | Keyboard event. `state` is `0`=up / `1`=down; `modifiers` is an opaque `uint16` bitmask (Shift / Ctrl / Alt / Meta — the exact bit assignment is producer-side and not part of the wire protocol). Dispatched to the producer's input callback as an `OVSTREAM_INPUT_KEYBOARD` event. |
 | `INPUT_MOUSE type=<u32> modifiers=<u32> x=<i32> y=<i32> data=<i32> data2=<i32> btnState=<u32> tsUs=<u64> scrollX=<float> scrollY=<float>` | Mouse event. `type` selects `move` / `button` / `wheel`; field interpretation mirrors `ovstream_mouse_event_t`. Floats use `%.9g` so single-precision values round-trip losslessly. |
 | `INPUT_GAMEPAD control=<u32> position=<i32> gamepadId=<u32> tsUs=<u64>` | Gamepad axis / button event. `control` indexes `ovstream_gamepad_control_t`; `position` is the per-control value. |
+| `INPUT_TOUCH lowLevel=<u32> modifiers=<u32> srcW=<u32> srcH=<u32> tsUs=<u64> count=<u32> [id=<u32> phase=<u32> x=<float> y=<float> xr=<float> yr=<float> pts=<u64>] × count` | Multi-touch event. The fixed header is followed by `count` (≤ 11) space-separated per-contact groups parsed positionally; field interpretation mirrors `ovstream_touch_event_t`. `phase` indexes `ovstream_touch_phase_t`; coordinates are normalized `[0,1]`. A data-bearing line (may exceed 256 bytes). Dispatched as an `OVSTREAM_INPUT_TOUCH` event. |
 | `MESSAGE <utf8>` | Free-form client→server text message. Producer receives it via the callback registered with `ovstream_set_message_callback`. |
 | `UNICODE <utf8>` | IME / composed-text event. Producer receives it via the callback registered with `ovstream_set_unicode_callback`. |
 
@@ -639,7 +693,7 @@ Connection close (FIN / EOF / pipe break) is also treated as detach.
 |---|---|
 | `ATTACH_OK protocolVersion=<u32> slotCount=<u32>` | Successful attach. Reports the negotiated protocol version and the region's ring depth. |
 | `ATTACH_REJECTED reason=<text>` | Attach refused; server closes the connection. (Not currently emitted by the V1 server but reserved for future use.) |
-| `MESSAGE <utf8>` | Free-form server→client text message produced by `ovstream_send_message`. Broadcast to every attached client. Delivered to the client via the callback registered with `ovstream_shm_client_set_message_callback`. |
+| `MESSAGE <utf8>` | Free-form server→client text message produced by `ovstream_send_message`. Broadcast to every attached client. Delivered to the client via the callback registered with `ovstream_client_set_message_callback`. |
 | `STOPPED` | Reserved. The V1 server does **not** emit this line — clients detect producer stop via the `producerAlive` atomic in the region header (which the producer clears before tearing down the control endpoint) plus the wakeup signal that fires alongside it. The line stays reserved so a future protocol revision can opt into it without ABI churn. |
 
 Forward-compatibility: unknown lines from either side are ignored. Adding new line types in a future minor protocol revision is non-breaking as long as existing lines retain their format.
@@ -658,7 +712,7 @@ The server tracks attached client count atomically. The transition `0 → 1` (fi
 
 The `protocolVersion` field in both the region header and the `ATTACH`/`ATTACH_OK` handshake gates compatibility. A client that reads a region whose `protocolVersion` doesn't match its own constant **must refuse to attach** and report an error. The same applies to a server receiving an `ATTACH protocolVersion=N` where N differs from its own — though the current server is lenient (it sends `ATTACH_OK` and lets the client decide).
 
-Adding fields to `RegionHeader::reserved` or the slot pad is a **breaking change**: bump `protocolVersion`. Adding new control-channel lines is **non-breaking** as long as existing lines are unchanged: the `INPUT_KEY` / `INPUT_MOUSE` / `INPUT_GAMEPAD` / `MESSAGE` / `UNICODE` lines were added under V1 after the initial shipping of `ATTACH` / `DETACH` / `ATTACH_OK`, with no `protocolVersion` bump.
+Adding fields to `RegionHeader::reserved` or the slot pad is a **breaking change**: bump `protocolVersion`. Adding new control-channel lines is **non-breaking** as long as existing lines are unchanged: the `INPUT_KEY` / `INPUT_MOUSE` / `INPUT_GAMEPAD` / `INPUT_TOUCH` / `MESSAGE` / `UNICODE` lines were added under V1 after the initial shipping of `ATTACH` / `DETACH` / `ATTACH_OK`, with no `protocolVersion` bump.
 
 ### 6.1 Version history
 
@@ -671,18 +725,26 @@ Adding fields to `RegionHeader::reserved` or the slot pad is a **breaking change
 
 ## 7. Consumer-facing API
 
-For consumers attaching to a SHM stream, the SDK ships two thin
-wrappers over the wire protocol specified above:
+For consumers attaching to an ovstream stream, the SDK ships a single
+backend-agnostic client. The transport is selected by `ClientType` /
+`ovstream_client_type_t`, and the lifecycle / control surface (create /
+wait_frame / is_alive / send_input_event / send_message / send_unicode /
+message callback / destroy) is identical across all three backends —
+only the config sub-struct and which `ovstream_frame_t` member carries
+the pixels differ:
 
-| Language | Entry point |
-|---|---|
-| C | `include/ovstream/ovstream_shm_client.h` (see its Doxygen blocks for the per-function contract) |
-| Python | `ovstream.ShmClient` from the `ovstream` PyPI package |
+| `ClientType` | C entry point | Python entry point | Pixels |
+|---|---|---|---|
+| `OVSTREAM_CLIENT_SHM` | `ovstream_create_client(OVSTREAM_CLIENT_SHM, …)` with `config.shm.stream_name` | `ovstream.Client(ovstream.ClientType.SHM, stream_name=…)` | host (`frame.data`) |
+| `OVSTREAM_CLIENT_CUDASHM` | `ovstream_create_client(OVSTREAM_CLIENT_CUDASHM, …)` with `config.cudashm.stream_name` | `ovstream.Client(ovstream.ClientType.CUDASHM, stream_name=…)` | GPU (`frame.device_ptr`) |
+| `OVSTREAM_CLIENT_NATIVE` | `ovstream_create_client(OVSTREAM_CLIENT_NATIVE, …)` with `config.native.{server_ip, signal_port, stream_port, cuda_device}` | `ovstream.Client(ovstream.ClientType.NATIVE, server_ip=…)` | host (`frame.data`), NvStreamingMedia-decoded |
 
-Both are convenience layers, not separate sources of truth — the
-bytes-on-the-wire contract here is the actual ABI. Writing a
-third-party client in any language is supported as long as it
-follows this document.
+All entry points live in `include/ovstream/ovstream_client.h` (see its
+Doxygen blocks for the per-function contract) and the `ovstream` PyPI
+package. They are convenience layers, not separate sources of truth —
+for SHM the bytes-on-the-wire contract specified above is the actual
+ABI, and writing a third-party SHM client in any language is supported
+as long as it follows this document.
 
 
 # Frame pacing utility (ovstream_utils)

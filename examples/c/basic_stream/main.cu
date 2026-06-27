@@ -24,8 +24,8 @@
 //   basic_stream webrtc rtsp shm:demo      (three transports simultaneously)
 //
 // For network specs the value after the colon is a port; for `shm` and
-// `cudashm` it is the stream name a downstream
-// `ovstream_shm_client` / `ovstream_cudashm_client` (or the bundled
+// `cudashm` it is the stream name a downstream `ovstream_client`
+// (OVSTREAM_CLIENT_SHM / OVSTREAM_CLIENT_CUDASHM) (or the bundled
 // `examples/python/local_stream/main_viewer.py` /
 // `main_cudashm_viewer.py`) attaches to.
 
@@ -123,6 +123,11 @@ void onInput(ovstream_server_t* server, const ovstream_input_event_t* event, voi
     {
         printf("Mouse button: %d %s\n", event->mouse.data,
                event->mouse.button_state == OVSTREAM_KEY_STATE_DOWN ? "down" : "up");
+    }
+    else if (event->type == OVSTREAM_INPUT_TOUCH)
+    {
+        printf("Touch: %u point(s)%s\n", event->touch.point_count,
+               event->touch.low_level ? " (low-level)" : "");
     }
 }
 // [/snippet:on-input-callback]

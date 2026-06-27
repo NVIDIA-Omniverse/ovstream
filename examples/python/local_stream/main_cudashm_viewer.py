@@ -75,8 +75,8 @@ import ovstream._bindings as _b
 
 
 # Load the CUDA runtime that ships next to ovstream so the viewer's
-# D2H cudaMemcpy lands on the same driver instance the slim
-# cudashm_client library imported the IPC handles into. Mirrors the
+# D2H cudaMemcpy lands on the same driver instance the
+# ovstream_client library imported the IPC handles into. Mirrors the
 # pattern in local_stream/main.py.
 _sdk_dir = Path(_b._find_library()).parent
 if sys.platform == "win32":
@@ -121,7 +121,7 @@ _cudart.cudaSetDevice.argtypes = [ctypes.c_int]
 _cudart.cudaSetDevice.restype = ctypes.c_int
 
 
-def _copy_slot_to_host(frame: ovstream.CudashmFrame) -> "np.ndarray":
+def _copy_slot_to_host(frame: ovstream.Frame) -> "np.ndarray":
     """D2H-copy one cudashm slot into a numpy BGRA buffer.
 
     Returns a fresh (height, width, 4) uint8 array trimmed to the
@@ -178,7 +178,8 @@ def main():
     last_err = ""
     while time.monotonic() < deadline:
         try:
-            client = ovstream.CudashmClient(args.stream_name)
+            client = ovstream.Client(ovstream.ClientType.CUDASHM,
+                                     stream_name=args.stream_name)
             break
         except ovstream.OvstreamError as e:
             last_err = str(e)
@@ -189,7 +190,7 @@ def main():
         return 1
 
     print(f"Attached to '{args.stream_name}' (producer GPU: device "
-          f"{client.producer_device}). Press 'q' to exit.")
+          f"{client.get_producer_device()}). Press 'q' to exit.")
     window = f"ovstream-cudashm: {args.stream_name}"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
 
@@ -197,7 +198,7 @@ def main():
     cv2.setMouseCallback(window, _make_mouse_callback(client, dims))
 
     try:
-        while client.is_producer_alive():
+        while client.is_alive():
             frame = client.wait_frame(timeout_ms=500)
             if frame is None:
                 if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
@@ -219,7 +220,7 @@ def main():
             if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
                 break
 
-        if not client.is_producer_alive():
+        if not client.is_alive():
             print("Producer stopped.")
     finally:
         cv2.destroyAllWindows()

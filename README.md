@@ -30,7 +30,7 @@ For text readers, search, and AI coding agents, the same contract is summarized 
 
 | What goes in | ovstream surface | What comes out |
 | --- | --- | --- |
-| BGRA8 CUDA frames from a renderer or application | `stream_video` | WebRTC, RTSP, native, or SHM video delivery |
+| BGRA8 CUDA frames from a renderer or application | `stream_video` | WebRTC, RTSP, native, SHM, or CUDASHM video delivery |
 | DLPack tensor frames from Warp, PyTorch, CuPy, JAX, or another producer | `stream_video` | Transport-selected frame stream |
 | Pre-encoded H.264, H.265, AV1, or custom payloads | `stream_video` | Passthrough video stream without re-encoding |
 | 16-bit PCM audio | `stream_audio` | WebRTC or native audio stream |
@@ -105,7 +105,7 @@ The libraries require a compatible NVIDIA RTX-capable GPU with a compatible NVID
 
 ## Documentation
 
-The public C API is fully documented inline in the header files (`ovstream.h`, `ovstream_types.h`, `ovstream_shm_client.h`, `ovstream_cudashm_client.h`) shipped under `include/ovstream/` inside every release archive — each function carries its argument types, return semantics, thread-safety rules, and lifetime contracts as Doxygen-style comments. The Python API mirrors the C API and is documented via docstrings on the wheel-installed `ovstream` package (run `help(ovstream)` after `pip install ovstream`).
+The public C API is fully documented inline in the header files (`ovstream.h`, `ovstream_types.h`, `ovstream_client.h`) shipped under `include/ovstream/` inside every release archive — each function carries its argument types, return semantics, thread-safety rules, and lifetime contracts as Doxygen-style comments. The Python API mirrors the C API and is documented via docstrings on the wheel-installed `ovstream` package (run `help(ovstream)` after `pip install ovstream`).
 
 For runnable code, see [examples](examples/README.md). For AI-coding-agent-friendly task recipes, see [skills](skills/README.md).
 

@@ -29,7 +29,7 @@ Usage:
     python main.py webrtc rtsp shm:demo  (three transports simultaneously)
 
 For network specs the value after the colon is a port; for `shm` it is
-the stream name an `ovstream.ShmClient` (or the bundled
+the stream name an `ovstream.Client` (or the bundled
 `examples/python/local_stream/main_viewer.py`) attaches to.
 
 View RTSP with:  ffplay rtsp://localhost:8554/stream
@@ -231,6 +231,10 @@ def main():
                         state = ("down" if mouse.button_state == ovstream.KeyState.DOWN
                                  else "up")
                         print(f"Mouse button: {mouse.data} {state}")
+                    elif event.type == ovstream.InputEventType.TOUCH:
+                        touch = event.touch
+                        print(f"Touch: {len(touch.points)} point(s)"
+                              + (" (low-level)" if touch.low_level else ""))
                 s.on_input = _on_input
 
             cfg = ovstream.ServerConfig(width=W, height=H)

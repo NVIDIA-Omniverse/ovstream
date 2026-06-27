@@ -51,10 +51,10 @@ python ../../python/local_stream/main.py local_stream --reader
 python ../../python/local_stream/main_viewer.py local_stream
 ```
 
-For a C / C++ consumer, see the `<ovstream/ovstream_shm_client.h>` API (`ovstream_shm_client_create`, `_wait_frame`, `_release_frame`, `_is_producer_alive`) and the `shm-consumers` skill.
+For a C / C++ consumer, see the `<ovstream/ovstream_client.h>` API (`ovstream_create_client(OVSTREAM_CLIENT_SHM, …)`, `ovstream_client_wait_frame`, `ovstream_client_release_frame`, `ovstream_client_is_alive`) and the `shm-consumers` skill.
 
 > [!NOTE]
-> This example is intentionally **SHM-only** (host-resident pixels). For the GPU-resident CUDASHM transport, use any of the pluggable examples with a `cudashm:<name>` spec instead — e.g. `./build/basic_stream cudashm:my-stream` from [`../basic_stream`](../basic_stream/). The CUDASHM consumer is `examples/python/local_stream/main_cudashm_viewer.py`; see the `cudashm-consumers` skill for the C client API (`<ovstream/ovstream_cudashm_client.h>`).
+> This example is intentionally **SHM-only** (host-resident pixels). For the GPU-resident CUDASHM transport, use any of the pluggable examples with a `cudashm:<name>` spec instead — e.g. `./build/basic_stream cudashm:my-stream` from [`../basic_stream`](../basic_stream/). The CUDASHM consumer is `examples/python/local_stream/main_cudashm_viewer.py`; see the `cudashm-consumers` skill for the C client API (`<ovstream/ovstream_client.h>` with `OVSTREAM_CLIENT_CUDASHM`).
 
 ## What it shows
 

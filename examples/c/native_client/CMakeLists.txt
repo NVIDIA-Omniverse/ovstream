@@ -8,18 +8,18 @@
 # without an express license agreement from NVIDIA CORPORATION or
 # its affiliates is strictly prohibited.
 
-# examples/c/CMakeLists.txt - top level for all C examples.
 cmake_minimum_required(VERSION 3.18)
-project(ovstream_examples LANGUAGES CXX CUDA)
+project(native_client LANGUAGES CXX)
 
-# Enforce a consistent C++ standard across all examples rather than
-# relying on each sub-project to set it individually.
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_subdirectory(basic_stream)
-add_subdirectory(local_stream)
-add_subdirectory(native_client)
-add_subdirectory(starfield_stream)
-add_subdirectory(pre_encoded_stream)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/../cmake")
+include(ovstream)
+ovstream_fetch()
+
+# A pure consumer: link only the client library, never the server-side
+# ovstream library. ovstream_setup_runtime stages ovstream_client and its
+# StreamClientShared dependency alongside the binary.
+add_executable(native_client main.cpp)
+target_link_libraries(native_client PRIVATE ovstream::ovstream_client)
+ovstream_setup_runtime(native_client)

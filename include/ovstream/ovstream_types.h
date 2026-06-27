@@ -22,7 +22,7 @@
 //--------------------------------------------------------------
 #define OVSTREAM_VERSION_MAJOR 0
 #define OVSTREAM_VERSION_MINOR 4
-#define OVSTREAM_VERSION_PATCH 1
+#define OVSTREAM_VERSION_PATCH 2
 
 //--------------------------------------------------------------
 // @brief Mark a public entry point, type, or field as deprecated.
@@ -120,7 +120,7 @@ typedef struct
 //   ERROR                Generic failure. `ovstream_get_last_error()`
 //                        returns the call-site detail string.
 //   TIMEOUT              The operation timed out (e.g.
-//                        `ovstream_shm_client_wait_frame` returned no
+//                        `ovstream_client_wait_frame` returned no
 //                        frame within the requested wait window).
 //   INVALID_ARGUMENT     A required pointer was NULL, an enum was
 //                        out-of-range, or a value violated the
@@ -366,6 +366,75 @@ typedef struct
 } ovstream_gamepad_event_t;
 
 //--------------------------------------------------------------
+// @brief Maximum number of contact points carried by one touch event.
+//
+// Sized to StreamSDK's low-level touch maximum (11), which also
+// covers the high-level maximum (4). Touch events reporting more
+// contacts than this are truncated to this many points.
+//--------------------------------------------------------------
+#define OVSTREAM_MAX_TOUCH_POINTS 11
+
+//--------------------------------------------------------------
+// @brief Lifecycle phase of a single touch contact.
+//
+// Populated for low-level touch, where the client reports an
+// explicit per-contact transition. High-level touch reports only
+// the current contact set without transitions, so its points
+// carry `OVSTREAM_TOUCH_PHASE_UNKNOWN`.
+//--------------------------------------------------------------
+typedef enum
+{
+    OVSTREAM_TOUCH_PHASE_UNKNOWN = 0, // No phase reported (high-level touch).
+    OVSTREAM_TOUCH_PHASE_DOWN    = 1, // Contact started (pointer down).
+    OVSTREAM_TOUCH_PHASE_UP      = 2, // Contact ended (pointer up).
+    OVSTREAM_TOUCH_PHASE_MOVE    = 3, // Contact moved.
+    OVSTREAM_TOUCH_PHASE_CANCEL  = 4, // Contact cancelled by the client.
+} ovstream_touch_phase_t;
+
+//--------------------------------------------------------------
+// @brief A single touch contact point within an `ovstream_touch_event_t`.
+//
+// Coordinates are normalized to [0,1] over the client's touch
+// surface (origin top-left). `x_radius` / `y_radius` carry the
+// raw low-level contact radii in native StreamSDK units and are 0
+// for high-level touch, which doesn't report them.
+//--------------------------------------------------------------
+typedef struct
+{
+    uint16_t               id;           // Contact id, stable across the contact's lifetime.
+    float                  x;            // Normalized horizontal position [0,1].
+    float                  y;            // Normalized vertical position [0,1].
+    float                  x_radius;     // Contact radius, native units; 0 if unavailable.
+    float                  y_radius;     // Contact radius, native units; 0 if unavailable.
+    ovstream_touch_phase_t phase;        // Contact phase; UNKNOWN for high-level touch.
+    uint64_t               timestamp_us; // Per-contact capture time in us; 0 if unavailable.
+} ovstream_touch_point_t;
+
+//--------------------------------------------------------------
+// @brief A multi-touch event reported by the client.
+//
+// Carries the full set of active contacts for one touch frame.
+// `low_level` distinguishes the two StreamSDK touch flavors:
+//   - high-level: coordinates normalized against
+//     `source_width`/`source_height`, with an event-level
+//     `modifiers` bitmask and capture `timestamp_us`, and no
+//     per-contact phase.
+//   - low-level: per-contact phase / radius / timestamp; the
+//     event-level `modifiers`, `source_width`, `source_height`,
+//     and `timestamp_us` are 0.
+//--------------------------------------------------------------
+typedef struct
+{
+    uint8_t  point_count;   // Valid entries in `points` (<= OVSTREAM_MAX_TOUCH_POINTS).
+    uint8_t  low_level;     // 1 = low-level flavor, 0 = high-level.
+    uint16_t modifiers;     // Held keyboard modifiers (high-level only; 0 otherwise).
+    uint16_t source_width;  // Pixel width the coords were normalized against (high-level only; 0 otherwise).
+    uint16_t source_height; // Pixel height the coords were normalized against (high-level only; 0 otherwise).
+    uint64_t timestamp_us;  // Event capture time in us (high-level only; 0 otherwise).
+    ovstream_touch_point_t points[OVSTREAM_MAX_TOUCH_POINTS];
+} ovstream_touch_event_t;
+
+//--------------------------------------------------------------
 // @brief Which kind of input event is being reported.
 //
 // Selects the active member of the `ovstream_input_event_t`
@@ -376,12 +445,13 @@ typedef enum
     OVSTREAM_INPUT_KEYBOARD = 0,
     OVSTREAM_INPUT_MOUSE    = 1,
     OVSTREAM_INPUT_GAMEPAD  = 2,
+    OVSTREAM_INPUT_TOUCH    = 3,
 } ovstream_input_event_type_t;
 
 //--------------------------------------------------------------
-// @brief Tagged union over the three input event variants.
+// @brief Tagged union over the input event variants.
 //
-// Exactly one of `keyboard`, `mouse`, or `gamepad` is
+// Exactly one of `keyboard`, `mouse`, `gamepad`, or `touch` is
 // meaningful, determined by `type`.
 //--------------------------------------------------------------
 typedef struct
@@ -392,6 +462,7 @@ typedef struct
         ovstream_keyboard_event_t keyboard;
         ovstream_mouse_event_t    mouse;
         ovstream_gamepad_event_t  gamepad;
+        ovstream_touch_event_t    touch;
     };
 } ovstream_input_event_t;
 
@@ -576,13 +647,12 @@ typedef enum
 // backend modes (WebRTC-interop and native-NVSS, respectively);
 // they otherwise expose the same feature set. `SHM` writes raw
 // BGRA8 frames into a shared-memory ring buffer for same-machine
-// consumers (Electron/WebGL clients via the bundled
-// `ovstream_shm_client` library); see `ovstream_shm_client.h`.
-// `CUDASHM` keeps frames GPU-resident: the server allocates a
-// ring of CUDA buffers and hands out `cudaIpcMemHandle_t` values
-// over the control channel, so same-host (or same-container-host)
-// consumers can read pixels directly from GPU memory without a
-// device-to-host copy. See `ovstream_cudashm_client.h`.
+// consumers, which attach via the unified client API; see
+// `ovstream_client.h`. `CUDASHM` keeps frames GPU-resident: the
+// server allocates a ring of CUDA buffers and hands out
+// `cudaIpcMemHandle_t` values over the control channel, so same-host
+// (or same-container-host) consumers can read pixels directly from
+// GPU memory without a device-to-host copy.
 //--------------------------------------------------------------
 typedef enum
 {
@@ -599,7 +669,7 @@ typedef enum
 // Only BGRA8 is supported in V1; the field is a `uint32_t` on the
 // wire so future formats can be added without breaking the ABI.
 //--------------------------------------------------------------
-#define OVSTREAM_SHM_FORMAT_BGRA8 1u
+#define OVSTREAM_PIXEL_FORMAT_BGRA8 1u
 
 //--------------------------------------------------------------
 // @brief Server configuration passed to `ovstream_start`.
@@ -651,7 +721,8 @@ typedef struct
     // The SHM backend writes raw BGRA8 frames into a named shared-memory
     // ring buffer plus a sibling control channel (Unix domain socket on
     // POSIX, named pipe on Windows). Same-machine clients attach via
-    // `ovstream_shm_client_create` with the same `stream_name`. The
+    // `ovstream_create_client(OVSTREAM_CLIENT_SHM, ...)` with the same
+    // `stream_name`. The
     // control channel carries the reverse direction too: `send_message`
     // plus the message / input / unicode callbacks all work on SHM
     // servers and clients. `stream_audio` is not supported (always
@@ -676,8 +747,9 @@ typedef struct
     // `cudaIpcMemHandle_t` values over the control channel at
     // attach time, then D2D-copies each new frame into the next
     // slot. Same-host (or same-container-host) clients attach via
-    // `ovstream_cudashm_client_create` and read pixels directly
-    // from the imported device pointers -- no device-to-host copy.
+    // `ovstream_create_client(OVSTREAM_CLIENT_CUDASHM, ...)` and read
+    // pixels directly from the imported device pointers -- no
+    // device-to-host copy.
     //
     // Sharing semantics:
     //   - Server owns the buffers; producer lifecycle is identical

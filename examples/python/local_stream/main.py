@@ -20,7 +20,7 @@ The SHM ("shared memory") backend writes raw BGRA8 frames into a named
 shared region for same-machine consumers. This example demonstrates the
 full end-to-end loop in one process: a producer thread fills a CUDA
 buffer with a moving fill pattern and pushes frames; a reader thread
-attaches as an ovstream.ShmClient, pulls frames, and prints throughput.
+attaches as an ovstream.Client, pulls frames, and prints throughput.
 
 The reader could just as well live in a separate process / Electron
 N-API addon -- the only thing it needs to know is the stream name the
@@ -82,13 +82,14 @@ _cudart.cudaFree.restype = ctypes.c_int
 
 # [snippet:shm-consumer]
 def reader_thread(stream_name, stop_event):
-    """Attach as a ShmClient and report observed frames + per-second rate."""
+    """Attach as a SHM Client and report observed frames + per-second rate."""
     # Wait briefly for the producer to come up.
     deadline = time.monotonic() + 5.0
     client = None
     while time.monotonic() < deadline and not stop_event.is_set():
         try:
-            client = ovstream.ShmClient(stream_name)
+            client = ovstream.Client(ovstream.ClientType.SHM,
+                                     stream_name=stream_name)
             break
         except ovstream.OvstreamError:
             time.sleep(0.1)
@@ -101,7 +102,7 @@ def reader_thread(stream_name, stop_event):
     try:
         observed = 0
         last_report = time.monotonic()
-        while not stop_event.is_set() and client.is_producer_alive():
+        while not stop_event.is_set() and client.is_alive():
             frame = client.wait_frame(timeout_ms=500)
             if frame is None:
                 continue
@@ -179,7 +180,7 @@ def run_producer(stream_name, width, height, run_reader):
 
 
 def run_reader_only(stream_name):
-    # No ovstream.initialize() needed -- ShmClient is a pure consumer
+    # No ovstream.initialize() needed -- a SHM Client is a pure consumer
     # that doesn't depend on the server-side init refcount.
     stop_event = threading.Event()
     try:

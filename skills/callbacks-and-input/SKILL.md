@@ -13,7 +13,7 @@ WebRTC, native, SHM, and CUDASHM servers all have **reverse channels** that surf
 |-----------------|-------------------------------------------------|--------------|
 | `on_connection` | A client connects or disconnects                | All transports |
 | `on_message`    | The client sends a text/binary message          | WebRTC, native, SHM, CUDASHM |
-| `on_input`      | The client emits a keyboard / mouse / gamepad event | WebRTC, native, SHM, CUDASHM |
+| `on_input`      | The client emits a keyboard / mouse / gamepad / touch event | WebRTC, native, SHM, CUDASHM |
 | `on_unicode`    | The client emits a composed text event (IME, on-screen kbd, paste, emoji) | WebRTC, native, SHM, CUDASHM |
 
 RTSP has no input or message channel — only the connection callback fires. SHM and CUDASHM both carry the reverse channel over a local control socket / named pipe (sibling to the pixel transport).
@@ -44,7 +44,7 @@ server.on_unicode    = lambda text: handle_text(text)
 
 > **Source:** `examples/python/basic_stream/main.py` snippet `create-server`
 
-Input events arrive as `InputEvent` instances with a `type` field (`KEYBOARD`, `MOUSE`, `GAMEPAD`) and a discriminated `keyboard` / `mouse` / `gamepad` payload. Pattern-match on `.type` then read the right sub-struct.
+Input events arrive as `InputEvent` instances with a `type` field (`KEYBOARD`, `MOUSE`, `GAMEPAD`, `TOUCH`) and a discriminated `keyboard` / `mouse` / `gamepad` / `touch` payload. Pattern-match on `.type` then read the right sub-struct. A `TouchEvent` carries a `points` list of `TouchPoint`s (normalized `x`/`y` in `[0,1]`, a `TouchPhase`, and — for the low-level flavor — per-contact radius and timestamp); `low_level` distinguishes the two StreamSDK touch flavors.
 
 ## C
 
@@ -87,4 +87,4 @@ Input strings (the message you pass to `send_message`) are length-bounded and ne
 - **Callback after destroy.** Once you call `destroy_server` / `server.close()`, no further callbacks will fire — but a callback currently in flight from a network thread may still be running. The destroy call waits for it to drain.
 - **Registering on RTSP is silent.** It succeeds (the API doesn't error), but `on_message` / `on_input` simply won't fire because RTSP has no inbound channel. WebRTC, native, SHM, and CUDASHM all deliver these callbacks normally.
 - **`userData` lifetime.** If you pass a pointer into a callback registration, that pointer must outlive the server (or you must clear the callback with `NULL` before the pointer dies). The basic_stream example uses `std::unique_ptr<std::string>` to ensure the label string outlives the server.
-- **Gamepad events.** SHM and CUDASHM deliver gamepad events end-to-end (consumers send them via `ShmClient.send_input_event` / `CudashmClient.send_input_event`). On WebRTC / native the infrastructure exists on the server side but the StreamSDK clients do not currently forward gamepad input, so gamepad button presses in a browser client won't produce `on_input` callbacks today. Don't design around the WebRTC path without verifying it works for your specific client.
+- **Gamepad events.** SHM and CUDASHM deliver gamepad events end-to-end (consumers send them via `Client.send_input_event` on a `ClientType.SHM` / `ClientType.CUDASHM` client). `ClientType.NATIVE` clients forward keyboard / mouse / unicode input the same way (via `send_input_event` / `send_unicode`), but **not gamepad**. On WebRTC / native the infrastructure exists on the server side but the StreamSDK clients do not currently forward gamepad input, so gamepad button presses in a browser or native client won't produce `on_input` callbacks today. Don't design around the WebRTC path without verifying it works for your specific client.

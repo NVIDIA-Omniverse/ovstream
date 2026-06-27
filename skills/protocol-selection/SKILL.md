@@ -42,9 +42,9 @@ If unsure, **start with WebRTC** — it has the broadest client compatibility (b
 
 - **WebRTC** — open [`examples/webrtc_client/index.html`](../../examples/webrtc_client/index.html), enter `host:signal_port`. Off-the-shelf WebRTC tooling (`webrtc-cli`, raw `RTCPeerConnection`) will **not** interoperate; the client must speak the StreamSDK signaling flavor that the bundled JS library implements.
 - **RTSP** — any RTSP client. Quick checks: `ffplay rtsp://localhost:8554/stream`, or VLC → "Open Network Stream".
-- **Native** — requires a native StreamSDK client. No browser equivalent.
-- **SHM** — programmatic only. `ovstream.ShmClient` (Python) or `ovstream_shm_client_*` (C). The bundled OpenCV viewer is `examples/python/local_stream/main_viewer.py`. See `shm-consumers` skill.
-- **CUDASHM** — programmatic only. `ovstream.CudashmClient` (Python) or `ovstream_cudashm_client_*` (C). The bundled OpenCV viewer is `examples/python/local_stream/main_cudashm_viewer.py` (it D2Hs each slot for screen display; real consumers do their work on the GPU directly). See `cudashm-consumers` skill.
+- **Native** — requires a native StreamSDK client; no browser equivalent. The bundled consumer is `ovstream.Client(ovstream.ClientType.NATIVE, server_ip=…)` (Python) or `ovstream_create_client(OVSTREAM_CLIENT_NATIVE, …)` (C); it connects over the network and decodes client-side via StreamSDK's NvStreamingMedia (which uses NVDEC on NVIDIA GPUs) into host BGRA8 frames, so the consumer needs its own NVIDIA GPU but can be on a different machine than the producer. The OpenCV viewer is `examples/python/native_client/main.py`; a headless C consumer is `examples/c/native_client/`. See `native-consumers` skill.
+- **SHM** — programmatic only. `ovstream.Client(ovstream.ClientType.SHM, stream_name=…)` (Python) or `ovstream_create_client(OVSTREAM_CLIENT_SHM, …)` (C). The bundled OpenCV viewer is `examples/python/local_stream/main_viewer.py`. See `shm-consumers` skill.
+- **CUDASHM** — programmatic only. `ovstream.Client(ovstream.ClientType.CUDASHM, stream_name=…)` (Python) or `ovstream_create_client(OVSTREAM_CLIENT_CUDASHM, …)` (C). The bundled OpenCV viewer is `examples/python/local_stream/main_cudashm_viewer.py` (it D2Hs each slot for screen display; real consumers do their work on the GPU directly). See `cudashm-consumers` skill.
 
 ## Picking multiple at once
 
