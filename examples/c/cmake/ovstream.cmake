@@ -42,7 +42,7 @@ set(_OVSTREAM_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
 # before the ovstream package has been fetched, so it can't read the
 # header. Update this literal at release time alongside the integer
 # macros; `scripts/package.py` enforces the match at build time.
-set(OVSTREAM_VERSION "0.4.3" CACHE STRING "ovstream version to fetch")
+set(OVSTREAM_VERSION "0.4.4" CACHE STRING "ovstream version to fetch")
 
 # Default download base URL. ovstream archives are attached to the
 # GitHub Release at github.com/NVIDIA-Omniverse/ovstream/releases/tag/v<ver>.
