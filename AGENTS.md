@@ -41,7 +41,7 @@ Edit these directly when needed; the mirror never touches them.
 - `examples/python/` — Python example projects (`basic_stream`, `local_stream`, `warp_stream`, `ovrtx_stream`).
 - `examples/c/` — C/C++ example projects (`basic_stream`, `starfield_stream`, `local_stream`, `pre_encoded_stream`).
 - `examples/webrtc_client/` — drop-in browser client for the WebRTC transport.
-- `skills/` — task-oriented agent skills (`*/SKILLS.md`).
+- `skills/` — task-oriented agent skills (`*/SKILL.md`).
 
 ## Common Workflows
 
@@ -74,18 +74,21 @@ There is no separately-maintained API reference document. The headers and the ex
 
 When a request maps to a known ovstream workflow, go directly to the relevant skill in `skills/`:
 
-- C project bootstrapping -> `skills/project-setup-c/SKILLS.md`
-- Python project bootstrapping -> `skills/project-setup-python/SKILLS.md`
-- App-level lifecycle and ordering -> `skills/application-flow/SKILLS.md`
-- Creating and configuring a server -> `skills/server-creation/SKILLS.md`
-- Streaming frames (raw CUDA, pre-encoded) -> `skills/streaming-frames/SKILLS.md`
-- Picking a transport (WebRTC/RTSP/native/SHM) -> `skills/protocol-selection/SKILLS.md`
-- Connection / message / input callbacks -> `skills/callbacks-and-input/SKILLS.md`
-- CUDA buffer interop and pitch alignment -> `skills/cuda-interop/SKILLS.md`
-- Error/reporting patterns -> `skills/error-handling/SKILLS.md`
-- Writing an SHM reader/consumer -> `skills/shm-consumers/SKILLS.md`
+- C project bootstrapping -> `skills/project-setup-c/SKILL.md`
+- Python project bootstrapping -> `skills/project-setup-python/SKILL.md`
+- App-level lifecycle and ordering -> `skills/application-flow/SKILL.md`
+- Creating and configuring a server -> `skills/server-creation/SKILL.md`
+- Streaming frames (raw CUDA, pre-encoded) -> `skills/streaming-frames/SKILL.md`
+- Picking a transport (WebRTC/RTSP/native/SHM) -> `skills/protocol-selection/SKILL.md`
+- Connection / message / input callbacks -> `skills/callbacks-and-input/SKILL.md`
+- CUDA buffer interop and pitch alignment -> `skills/cuda-interop/SKILL.md`
+- Error/reporting patterns -> `skills/error-handling/SKILL.md`
+- Writing an SHM reader/consumer -> `skills/shm-consumers/SKILL.md`
+- Writing a CUDASHM (CUDA IPC) reader/consumer -> `skills/cudashm-consumers/SKILL.md`
+- Writing a native (StreamSDK) reader/consumer -> `skills/native-consumers/SKILL.md`
+- Diagnosing WebRTC/native connection failures -> `skills/webrtc-connection-diagnostics/SKILL.md`
 
-If multiple skills seem relevant, start with `skills/application-flow/SKILLS.md`, then layer in specialized skills.
+If multiple skills seem relevant, start with `skills/application-flow/SKILL.md`, then layer in specialized skills.
 
 ## Agent Expectations
 
