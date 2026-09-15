@@ -75,13 +75,14 @@ If you're integrating ovstream into your own renderer, start from `ovrtx_stream/
 |--------|--------|---|
 | Server lifetime | Context manager (`with Server(...) as s`) or explicit `close()` | `ovstream_destroy_server(server)` |
 | Errors | `OvstreamError` exceptions | `ovstream_result_t` returns + `ovstream_get_last_error()` |
-| Callback wiring | Assign to `server.on_connection`, `.on_message`, `.on_input` | `ovstream_set_connection_callback`, `ovstream_set_message_callback`, `ovstream_set_input_callback` |
+| Callback wiring | Assign to `server.on_connection`, `.on_message`, `.on_input`, `.on_resize_request`, `.on_clipboard`, `.on_app_message`, `.on_qos` | `ovstream_set_connection_callback`, `ovstream_set_message_callback`, `ovstream_set_input_callback`, `ovstream_set_resize_request_callback`, `ovstream_set_clipboard_callback`, `ovstream_set_app_message_callback`, `ovstream_set_qos_callback` |
 | Config | `ServerConfig(width=..., height=..., ...)` dataclass | `ovstream_server_config_t` struct + `ovstream_config_defaults()` |
 
 ## Common Pitfalls
 
 - **Callback timing.** Callbacks fire on internal network/SDK threads. Either keep callback bodies short and lock-free, or marshal to your main thread yourself. See `callbacks-and-input` skill.
-- **Buffer lifetime in streaming.** `stream_video` stages the frame data into server-owned memory before returning, so the caller-supplied buffer is free to reuse or release immediately on return. Reusing a long-lived buffer across frames is still the common pattern because it avoids per-frame allocation; per-frame `std::vector`s or stack buffers are also legal. Producers that want to skip the staging copy and overlap their next render with the encoder's read should pass a CUDA event via `frame.sync`.
+- **Buffer lifetime in streaming.** `stream_video` stages the frame data into server-owned memory before returning, so the caller-supplied buffer is free to reuse or release immediately on return — except with `webrtc.resizable`, which disables frame copying and requires a persistent buffer preallocated at the maximum resolution (see the `streaming-frames` skill). Outside that mode, reusing a long-lived buffer across frames is still the common pattern because it avoids per-frame allocation; per-frame `std::vector`s or stack buffers are also legal. Producers that want to skip the staging copy and overlap their next render with the encoder's read should pass a CUDA event via `frame.sync`.
 - **RTSP has no input/message channel.** Registering `on_message` / `on_input` on an RTSP server is silent — the registration succeeds but the callbacks never fire. WebRTC, native, SHM, and CUDASHM all carry a reverse channel; SHM and CUDASHM do so via a local control socket / named pipe alongside their pixel transports.
+- **Register stream-message callbacks before `start`.** `on_resize_request` in particular feeds the config handshake — a client that handshakes before registration is told resize is unavailable. Cursor state (`set_cursor`) resets to `Arrow` on `stop`; re-set it after a re-`start`. See the `stream-messages` skill.
 - **Don't forget the ref-counted shutdown.** Every `initialize` must be paired with a `shutdown`. Calling `initialize` twice and `shutdown` once leaks the backend lifetime.
 - See `error-handling` skill for robust error checking patterns in both languages.

@@ -1,0 +1,25 @@
+#usda 1.0
+(
+    doc = "Root layer written by app_stream: sublayers the scene and defines the streaming RenderProduct."
+    subLayers = [
+        @@SCENE@@
+    ]
+)
+
+def Scope "Render"
+{
+    def RenderProduct "Stream"
+    {
+        uniform int2 resolution = (@WIDTH@, @HEIGHT@)
+        rel camera = <@CAMERA@>
+        rel orderedVars = [ <LdrColor> ]
+        token omni:rtx:rendermode = "RealTimePathTracing"
+        bool omni:rtx:dlss:frameGeneration = @FG@
+        int omni:rtx:dlss:frameGenerationInterpolatedFrameCount = @FG_COUNT@
+
+        def RenderVar "LdrColor"
+        {
+            uniform string sourceName = "LdrColor"
+        }
+    }
+}

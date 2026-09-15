@@ -26,7 +26,7 @@ This directory contains example projects demonstrating various features of ovstr
     <td align="center" width="50%">
       <a href="c/starfield_stream/"><b>Starfield Stream</b></a>
       <br>
-      <sub><b>Headline composition demo.</b> CUDA-animated starfield plus looping audio, mouse-input-driven avoidance, and the optional <code>ovstream_utils::Loop</code> frame pacer.</sub>
+      <sub><b>Headline composition demo.</b> CUDA-animated starfield plus looping audio, mouse-input-driven avoidance, client-driven resize + clipboard + cursor forwarding on WebRTC/native, and the optional <code>ovstream_utils::Loop</code> frame pacer.</sub>
     </td>
   </tr>
 </table>
@@ -43,7 +43,7 @@ This directory contains example projects demonstrating various features of ovstr
     <td align="center" width="50%">
       <a href="python/warp_stream/"><b>Warp Stream</b></a>
       <br>
-      <sub>NVIDIA Warp kernel produces the per-frame fill; <code>VideoFrame.from_dlpack</code> hands the buffer to ovstream zero-copy via DLPack + <code>VideoInput.TENSOR</code>.</sub>
+      <sub>NVIDIA Warp kernel produces the per-frame fill; <code>VideoFrame.from_dlpack</code> hands the buffer to ovstream zero-copy via DLPack + <code>VideoInput.TENSOR</code>. Demonstrates client-driven resize + clipboard + cursor forwarding on WebRTC/native.</sub>
     </td>
   </tr>
   <tr>
@@ -55,8 +55,16 @@ This directory contains example projects demonstrating various features of ovstr
     <td align="center" width="50%">
       <a href="python/ovrtx_stream/"><b>ovrtx + ovstream</b></a>
       <br>
-      <sub><b>Headline composition demo.</b> Load a USD scene with <a href="https://github.com/NVIDIA-Omniverse/ovrtx">ovrtx</a>, render it, and stream the result through ovstream.</sub>
+      <sub><b>Minimal composition demo.</b> Load a USD scene through <a href="https://github.com/NVIDIA-Omniverse/ovstage">ovstage</a>, render it with <a href="https://github.com/NVIDIA-Omniverse/ovrtx">ovrtx</a> straight to BGRA8, and stream the result through ovstream.</sub>
     </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="python/app_stream/"><b>app_stream</b></a>
+      <br>
+      <sub><b>Reference implementation.</b> ovrtx + ovstage + ovui + ovstream with DLSS Frame Generation: decoupled render cadence, generated frames paced into a 60 Hz stream, an ovui application chrome composited on the GPU, explicit frame ownership, and a statistics readout. The optimal, low-latency composition of the OV libraries.</sub>
+    </td>
+    <td align="center" width="50%"></td>
   </tr>
 </table>
 
@@ -86,7 +94,7 @@ Consumer-side examples — they attach to a running server (started by any produ
 
 ## Protocol selection (CLI)
 
-`basic_stream`, `starfield_stream`, `warp_stream`, and `ovrtx_stream` accept zero or more positional args of the form `<protocol>[:port-or-name]`. Multiple args spin up multiple servers off the same frame producer.
+`basic_stream`, `starfield_stream`, `warp_stream`, `ovrtx_stream`, and `app_stream` accept zero or more positional args of the form `<protocol>[:port-or-name]`. Multiple args spin up multiple servers off the same frame producer.
 
 | Protocol | Default | Example arg |
 |---|---|---|

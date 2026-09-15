@@ -64,6 +64,14 @@ Find the line(s) you have in the table below (a condensed view of the doc's
 For any hex code not above, see the full StreamSDK hex-error table in
 `docs/WEBRTC_CONNECTIVITY.md`.
 
+Stream-control-message log lines (INFO/WARN on `ovstream.webrtc.message`)
+are protocol behavior, not connectivity faults: "client requested a stream
+resize" is a healthy resize flow; "dropping client resize request" means
+the stream is not resizable or no resize-request callback is registered
+(the handshake's `allow_dynamic_resize` told the client so); clipboard
+"out-of-order" / "reassembly cap" warnings drop one transfer and recover
+on the client's next send.
+
 ## Step 3 — reproduce to confirm (SDK source tree)
 
 If you have the SDK source tree (not just the installed wheel), use the

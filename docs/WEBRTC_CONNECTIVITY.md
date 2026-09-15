@@ -301,6 +301,24 @@ notes lines you may additionally see that are not auto-asserted.
   client error `0xC0F2220F`) or a `wss`/mixed-content issue when served over
   HTTPS.
 
+### browser-app-messages
+
+- **Topology:** A headless browser loads `examples/webrtc_client/index.html`
+  against a loopback server that echoes application messages through
+  `ovstream_utils.messaging.AppMessenger` and reports the `Hand` cursor. The
+  page sends a single-part application message and one larger than a single
+  transport message (100 KB), so the latter can only arrive if both sides
+  split and reassemble it; each must come back as one intact delivery, and
+  the video element's cursor must be `pointer`.
+- **Expected:** connect. Server logs `Client connected to WebRTC server`.
+- **Diagnosis:** Exercises the application-message envelope, the part
+  splitting and reassembly in both directions, and cursor forwarding through
+  the config handshake, all against the real browser client library. If
+  `browser-client-decode` passes but this fails, the bundled client library and
+  the messenger disagree on the message convention (`event_type` / `id` /
+  `part` / `numParts`) or on the cursor message; compare the bundled client
+  version with the one the `app-messaging` skill documents.
+
 ---
 
 ## StreamSDK hex error code reference

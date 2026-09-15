@@ -29,11 +29,11 @@ The Python wheel bundles `cudart64_*.dll` / `libcudart.so` alongside `ovstream.d
 
 > **Source:** `examples/python/basic_stream/main.py` snippet `bundled-cudart`
 
-If you'd rather use a higher-level CUDA Python package, [`CuPy`](https://cupy.dev), [`PyCUDA`](https://documen.tician.de/pycuda/), or [`NVIDIA Warp`](https://developer.nvidia.com/warp-python) all expose `__cuda_array_interface__` or a `.data_ptr()` accessor that yields a raw device pointer — pass that as `VideoFrame.buffer`. See the `ovrtx_stream` example for a Warp-based version.
+If you'd rather use a higher-level CUDA Python package, [`CuPy`](https://cupy.dev), [`PyCUDA`](https://documen.tician.de/pycuda/), or [`NVIDIA Warp`](https://developer.nvidia.com/warp-python) all expose `__cuda_array_interface__` or a `.data_ptr()` accessor that yields a raw device pointer — pass that as `VideoFrame.buffer`. See the `warp_stream` example for a Warp-based producer, and `ovrtx_stream` for handing a renderer's mapped CUDA pointer straight to `VideoFrame`.
 
 ## BGRA, not RGBA
 
-ovstream's CUDA video format is BGRA8 (blue first), not RGBA8. If your producer outputs RGBA, swizzle on the GPU before submitting. (At the time of writing, ovrtx's `LdrColor` render var is RGBA8 — a producer-side BGRA8 path is in flight; until that lands, the `ovrtx_stream` example does the swizzle itself.) Sketch:
+ovstream's CUDA video format is BGRA8 (blue first), not RGBA8. If your producer outputs RGBA, swizzle on the GPU before submitting. Sketch:
 
 ```cpp
 // CUDA kernel sketch
@@ -44,11 +44,11 @@ px[2] = rgba[0];  // R
 px[3] = rgba[3];  // A
 ```
 
-A future ovrtx release may emit BGRA8 directly, removing the swizzle step.
+ovrtx's `LdrColor` render var is RGBA8, but ovrtx 0.5 can publish a BGRA8 render var from its SPG `Swizzle` node (`spg:rtx.spg.stdlib/Swizzle`, `swizzle = "zyxw"`), so the swizzle happens renderer-side and no application kernel is needed. The `ovrtx_stream` example authors that render var in its `stream_scene.usda`. Note that with ovrtx 0.5 an extra render var on a RenderProduct disables DLSS Frame Generation, so an application that needs both keeps the ovrtx output RGBA8 and swizzles the frame it composes for streaming instead.
 
 ## Lifetime / re-use pattern
 
-`stream_video` stages the frame data into server-owned memory before returning, so the caller may reuse or free the buffer immediately after the call returns. The recommended pattern is still **one long-lived CUDA buffer that you re-fill in place** each frame — it avoids per-frame allocator churn — but per-frame `cudaMalloc` / `cudaFree` is now also safe (the encoder never reads through the caller's pointer after return).
+`stream_video` stages the frame data into server-owned memory before returning, so the caller may reuse or free the buffer immediately after the call returns — except with `webrtc.resizable`, which disables frame copying and requires a persistent buffer preallocated at the maximum resolution (see the `streaming-frames` skill). The recommended pattern is **one long-lived CUDA buffer that you re-fill in place** each frame — it avoids per-frame allocator churn and is the only supported pattern in resizable mode — while outside that mode per-frame `cudaMalloc` / `cudaFree` is also safe (the encoder never reads through the caller's pointer after return).
 
 ## Synchronization
 
@@ -69,10 +69,10 @@ On a multi-GPU host the GPU your frames live on is often **not** the GPU the bac
 
 Set `ServerConfig.cuda_device` (C: `config.cuda_device`) to the ordinal your frame buffers are allocated on — every CUDA-input backend honors it.
 
-**For WebRTC/native, also pass `cuda_context`** — the producer's `CUcontext` as an int. This is **required** whenever the producer allocates frames in its own CUDA context, which Warp, ovrtx, and most real renderers do. StreamSDK encodes from the device pointer through that context; with `cuda_context=0` it falls back to the device's *primary* context, which cannot read a buffer allocated in a different context and fails the encode (`CUDA error invalid argument: Copying device buffer to VideoFrameResourceCuda`). `cuda_context=0` is only safe when the frames live in the primary context already, e.g. a plain `cudaMalloc` buffer.
+**For WebRTC/native, also pass `cuda_context`** — the producer's `CUcontext` as an int. This is **required** whenever the producer allocates frames in its own CUDA context, which Warp and most real renderers do. StreamSDK encodes from the device pointer through that context; with `cuda_context=0` it falls back to the device's *primary* context, which cannot read a buffer allocated in a different context and fails the encode (`CUDA error invalid argument: Copying device buffer to VideoFrameResourceCuda`). `cuda_context=0` is only safe when the frames live in the primary context already, e.g. a plain `cudaMalloc` buffer or an ovrtx 0.5 render output mapped to CUDA.
 
 ```python
-# Warp / ovrtx producer (own CUDA context): pass both.
+# Warp producer (own CUDA context): pass both.
 cfg = ovstream.ServerConfig(
     width=W, height=H,
     cuda_device=0,

@@ -27,8 +27,8 @@ with ovstream.Server(ovstream.ServerType.WEBRTC) as server:
 `ServerConfig` is a dataclass with sensible defaults (1920×1080, 60 FPS, BGRA8 CUDA, port 0 = "use protocol default"). Override only what you care about:
 
 ```python
-# WebRTC/native producers that render in their own CUDA context (Warp,
-# ovrtx, most renderers) must hand ovstream that context as an int;
+# WebRTC/native producers that render in their own CUDA context (Warp and
+# most renderers) must hand ovstream that context as an int;
 # plain cudaMalloc producers can leave cuda_context at 0.
 cuda_ctx = int(wp.get_device("cuda:0").context)  # example for a Warp producer
 
@@ -36,7 +36,7 @@ cfg = ovstream.ServerConfig(
     width=1280,
     height=720,
     cuda_device=0,                   # GPU the frames live on (-1 = backend default)
-    cuda_context=cuda_ctx,           # WebRTC/native: producer's CUcontext; required for own-context producers (Warp/ovrtx)
+    cuda_context=cuda_ctx,           # WebRTC/native: producer's CUcontext; required for own-context producers such as Warp
     webrtc_signal_port=50000,        # WebRTC / Native: signaling port
     stream_port=9000,                # RTSP: stream port
     shm_stream_name="my-stream",     # SHM: identifier (host-resident)
@@ -58,10 +58,11 @@ cfg = ovstream.ServerConfig(
 Per-protocol fields live in named sub-structs on `ovstream_server_config_t`:
 
 - `cfg.webrtc.signal_port` — WebRTC / Native signaling port.
+- `cfg.webrtc.resizable` (Python: `webrtc_resizable`) — permits the WebRTC/native stream resolution to vary per frame: `width` / `height` become the **maximum** (and encoder-preallocation) resolution, and each submitted frame's dimensions set the current resolution. Permits, not requires — fixed-size frames stay valid. It also disables StreamSDK's QoS-driven resolution scaling and frame copying (resolution is owned entirely by the application, which may reduce streaming performance; frames must come from a persistent `cudaMalloc` buffer preallocated at the maximum, never from a CUDA memory pool — see the `streaming-frames` skill), so enabling it and continuing to submit fixed-size frames is also the supported way to opt out of QoS scaling. Requires raw CUDA input; set `width` / `height` to a realistic ceiling, not 8K "just in case", since encoder memory is provisioned at the maximum. Pairs with `on_qos` / `ovstream_set_qos_callback`, which delivers the backend's recommended resolution so the application can scale itself.
 - `cfg.stream_port` — RTSP stream port.
 - `cfg.shm.stream_name` / `cfg.shm.slot_count` — SHM identifier and ring depth (host-resident).
 - `cfg.cudashm.stream_name` / `cfg.cudashm.slot_count` — CUDASHM identifier and ring depth (GPU-resident; ring lands on `cuda_device` when set, else on whichever CUDA device the calling thread is on at `start` time).
-- `cfg.cuda_device` / `cfg.cuda_context` — encoder GPU for raw-CUDA input (top-level, not in a sub-struct). `cuda_device = -1` (default) uses the backend default. On a multi-GPU host that default is usually the display GPU, not the GPU the producer renders on; a mismatch yields a connected client with no decodable video. Set `cuda_device` to the ordinal your frame buffers live on; every CUDA-input backend honors it. **For WebRTC/native also set `cuda_context` to the producer's context** (e.g. `int(wp.get_device("cuda:0").context)`) — required whenever the producer renders in its own CUDA context (Warp, ovrtx, most renderers), or StreamSDK fails the encode with `CUDA error invalid argument`; `cuda_context = 0` is only safe for primary-context buffers like plain `cudaMalloc`. RTSP applies `cuda_device` to its `nvh264enc` encoder; SHM/CUDASHM place their copy stream and ring buffers on it (defaulting to the calling thread's current device when unset).
+- `cfg.cuda_device` / `cfg.cuda_context` — encoder GPU for raw-CUDA input (top-level, not in a sub-struct). `cuda_device = -1` (default) uses the backend default. On a multi-GPU host that default is usually the display GPU, not the GPU the producer renders on; a mismatch yields a connected client with no decodable video. Set `cuda_device` to the ordinal your frame buffers live on; every CUDA-input backend honors it. **For WebRTC/native also set `cuda_context` to the producer's context** (e.g. `int(wp.get_device("cuda:0").context)`) — required whenever the producer renders in its own CUDA context (Warp and most renderers), or StreamSDK fails the encode with `CUDA error invalid argument`; `cuda_context = 0` is only safe for primary-context buffers like plain `cudaMalloc` or ovrtx 0.5 render outputs, which live in the device's primary context. RTSP applies `cuda_device` to its `nvh264enc` encoder; SHM/CUDASHM place their copy stream and ring buffers on it (defaulting to the calling thread's current device when unset).
 
 ## Default port behavior
 
@@ -125,5 +126,5 @@ Key points:
 - The server is created in a "not started" state — `create_server` doesn't bind a socket. Network listeners come up at `start` time. Register callbacks **before** `start` if you care about catching the initial connect transition.
 - `ovstream_destroy_server` calls `stop` implicitly if you haven't already. The Python context manager does the same.
 - Re-`start`-ing a stopped server is supported. Re-using a destroyed handle is undefined.
-- `ServerConfig.width` and `.height` are baked in at `start` time. The active resolution is fixed until you stop and re-start. Client-driven dynamic resize is not currently supported.
+- `ServerConfig.width` and `.height` are baked in at `start` time as the stream's maximum extents. Without `webrtc.resizable` the WebRTC/native resolution is fixed until you stop and re-start; with it, per-frame dimensions set the resolution and client resize requests arrive via `on_resize_request` (see the `stream-messages` skill). SHM/CUDASHM are always resizable; RTSP never is.
 - For protocol picking guidance, see the `protocol-selection` skill.

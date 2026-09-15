@@ -72,7 +72,7 @@ python main.py
 | `opencv-python` | Required by [`examples/python/local_stream/main_viewer.py`](../../examples/python/local_stream/main_viewer.py) for an OpenCV-rendered SHM reader, and by [`examples/python/local_stream/main_cudashm_viewer.py`](../../examples/python/local_stream/main_cudashm_viewer.py) for the equivalent CUDASHM (GPU-resident) reader. |
 | `numpy` | Required by `main_viewer.py` (zero-copy numpy view of SHM pixels) and `main_cudashm_viewer.py` (host buffer for the D2H copy used by display). |
 | `warp-lang` | If you produce CUDA frames with [NVIDIA Warp](https://developer.nvidia.com/warp-python). |
-| `ovrtx` | If you compose ovstream with the ovrtx renderer (see [`examples/python/ovrtx_stream`](../../examples/python/ovrtx_stream/)). |
+| `ovrtx`, `ovstage` | If you compose ovstream with the ovrtx renderer; ovrtx 0.5 and later take scene data from ovstage (see [`examples/python/ovrtx_stream`](../../examples/python/ovrtx_stream/)). |
 
 ## Companion package: ovstream_utils
 

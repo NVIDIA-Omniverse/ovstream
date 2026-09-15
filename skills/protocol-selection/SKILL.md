@@ -31,6 +31,9 @@ If unsure, **start with WebRTC** — it has the broadest client compatibility (b
 | Audio (16-bit PCM)               | ✓      | —    | ✓      | —   | —       |
 | Input from client (keyboard/mouse) | ✓    | —    | ✓      | ✓   | ✓       |
 | Bidirectional messaging          | ✓      | —    | ✓      | ✓   | ✓       |
+| Resizable stream (per-frame dims) | opt-in (`webrtc.resizable`) | — | opt-in (`webrtc.resizable`) | always | always |
+| Stream control messages (handshake, client resize requests, clipboard, cursor) | ✓ | — | ✓ | — | — |
+| QoS hints (`on_qos`)             | ✓      | —    | ✓      | —   | —       |
 | Per-frame SEI metadata           | —      | ✓ (pre-encoded only) | —      | —   | —       |
 | Multiple simultaneous clients    | depends | ✓   | depends | ✓ (multi-reader) | ✓ (multi-reader) |
 | Browser-viewable                 | ✓      | —    | —      | —   | —       |

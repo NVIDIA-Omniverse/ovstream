@@ -17,8 +17,10 @@ Use ovstream when you have a renderer, CUDA producer, tensor producer, or pre-en
 * **Zero-copy CUDA buffer streaming** — push raw BGRA8 frames directly from CUDA memory; the SDK encodes on the GPU via NVENC.
 * **Pre-encoded passthrough** — stream existing H.264 / H.265 / AV1 bitstreams without re-encoding, for file replay or upstream-encoded sources.
 * **Bidirectional messaging and input** (WebRTC / native / SHM / CUDASHM) — receive keyboard, mouse, and Unicode events from connected clients; send messages back.
+* **Resizable streams** (WebRTC / native / SHM / CUDASHM) — `width` / `height` become the maximum and per-frame dimensions set the resolution; client resize requests arrive via a typed callback.
+* **Stream control messages** (WebRTC / native) — the browser client's config handshake, clipboard sync in both directions, cursor forwarding, app-message routing, and QoS hints via typed callbacks. `ovstream_utils.messaging` adds the browser client's application message convention on top: event types, correlation ids, and automatic splitting and reassembly of large payloads.
 * **STUN / TURN for WebRTC NAT traversal** — supply ICE servers via a single `set_webrtc_ice_servers` call before or after `start`; refresh time-limited TURN credentials live without dropping connected clients.
-* **Self-contained** — no Kit, no Carbonite, no Omniverse app required. The wheel bundles its native dependencies (StreamSDK, GStreamer, the bundled `gstnvenc` plugin); `pip install ovstream` is enough.
+* **Self-contained** — no Kit, no Carbonite, no Omniverse app required. The wheel bundles its native dependencies (StreamSDK, GStreamer, the CUDA runtime, the bundled `gstnvenc` plugin); `pip install ovstream` is enough. The bundled runtimes match the ones ovrtx ships, so the two can share a process; the per-release versions are in [ARCHITECTURE.md](docs/ARCHITECTURE.md#one-gstreamer-and-one-cuda-runtime-per-process).
 
 ## Supported inputs and outputs
 
@@ -91,7 +93,7 @@ CMake's `ovstream_fetch()` macro downloads the matching ovstream binary archive 
 
 Further examples using both the C and Python APIs are available in the [examples](examples/README.md) directory. See the individual examples for building and usage instructions.
 
-The Python `ovrtx_stream` example is the headline "composing two libraries into an app" demo — it loads a USD scene with [ovrtx](https://github.com/NVIDIA-Omniverse/ovrtx) and streams the rendered output through ovstream, end-to-end, with auto-orbiting camera and client input handling.
+The Python `ovrtx_stream` example is the minimal "composing OV libraries into an app" demo — it loads a USD scene through [ovstage](https://github.com/NVIDIA-Omniverse/ovstage), renders it with [ovrtx](https://github.com/NVIDIA-Omniverse/ovrtx), and streams the rendered output through ovstream, end-to-end, with auto-orbiting camera and client input handling.
 
 ## Releases
 

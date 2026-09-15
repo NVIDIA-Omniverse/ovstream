@@ -411,6 +411,11 @@ OVSTREAM_API ovstream_result_t ovstream_set_connection_callback(ovstream_server_
 // rejects payloads containing '\n' or '\r', which are reserved as
 // line terminators on the wire; both surface as INVALID_ARGUMENT.
 //
+// The payload is sent verbatim. A stock browser client only
+// surfaces messages wrapped in the app-recipient envelope (see
+// `ovstream_send_app_message`); native/bespoke clients receive the
+// raw bytes on their message callback.
+//
 // @par Example
 // @code
 //   const char* text = "hello";
@@ -452,6 +457,17 @@ OVSTREAM_API ovstream_result_t ovstream_send_message(ovstream_server_t* server,
 // its local control channel); RTSP has no data channel so the
 // callback never fires there. See `ovstream_set_connection_callback`
 // for thread-safety and registration semantics.
+//
+// Delivers raw bytes for everything the stream-message protocol
+// layer does not own: non-JSON payloads, JSON without the message
+// envelope shape, envelopes with unrecognized recipients, and
+// app-recipient envelopes when no app-message callback is
+// registered (see `ovstream_set_app_message_callback`). Raw bytes
+// are the intended channel for native/bespoke clients, symmetric
+// with `ovstream_send_message`. On WebRTC/native, envelopes
+// addressed to the stream itself (config handshake, resize,
+// clipboard) are consumed by the SDK and never reach this
+// callback.
 //
 // @param server    The server handle.
 // @param callback  Callback to invoke on each received message,
@@ -521,6 +537,235 @@ OVSTREAM_API ovstream_result_t ovstream_set_input_callback(ovstream_server_t* se
 OVSTREAM_API ovstream_result_t ovstream_set_unicode_callback(ovstream_server_t* server,
                                                              ovstream_unicode_callback_t callback,
                                                              void* user_data);
+
+//--------------------------------------------------------------
+// @brief Register (or clear) the client app-message callback.
+//
+// Fires on WebRTC and native servers when a client sends a JSON
+// message envelope addressed to the application
+// (`messageRecipient` of `"app"`, or its pre-handshake alias
+// `"kit"`); the callback receives the envelope's inner `data`
+// payload, unwrapped. With no callback registered such envelopes
+// fall back to the raw message callback in full. Registration
+// succeeds on other backends but the callback never fires there.
+// Chunked app messages are delivered as individual parts: the
+// chunk metadata (the client's `id` / `part` / `numParts` fields)
+// sits inside the delivered payload itself alongside its other
+// fields, so each part is self-describing; reassembly is up to
+// the application. `ovstream_send_app_message` is the outbound
+// counterpart. See `ovstream_set_connection_callback` for
+// thread-safety and registration semantics.
+//
+// @param server    The server handle.
+// @param callback  Callback to invoke for each app-addressed
+//                  message, or NULL to clear.
+// @param user_data Opaque pointer passed back to every invocation.
+//
+// @return
+//   - `OVSTREAM_API_SUCCESS` on success.
+//   - `OVSTREAM_API_INVALID_ARGUMENT` if `server` is NULL.
+//
+// @ingroup callbacks
+//--------------------------------------------------------------
+OVSTREAM_API ovstream_result_t ovstream_set_app_message_callback(ovstream_server_t* server,
+                                                                 ovstream_app_message_callback_t callback,
+                                                                 void* user_data);
+
+//--------------------------------------------------------------
+// @brief Register (or clear) the client resize-request callback.
+//
+// Fires on WebRTC and native servers when a client requests new
+// stream dimensions via the stream resize message. Requested
+// dimensions arrive validated: clamped to the stream's maximum
+// (`config.width` / `height`) and adjusted to the streaming
+// alignment rules. The SDK never resizes on its own -- the
+// application re-renders at the requested size and per-frame
+// dimensions apply it (see `webrtc.resizable`).
+//
+// Resize requests reach this callback only when the stream was
+// started with `webrtc.resizable` set; the config handshake
+// reports resize availability to the client as "resizable AND
+// callback registered", so register before `ovstream_start` or a
+// client that handshakes early is told resize is unavailable.
+// Registration succeeds on other backends but the callback never
+// fires there. See `ovstream_set_connection_callback` for
+// thread-safety and registration semantics.
+//
+// @param server    The server handle.
+// @param callback  Callback to invoke for each client resize
+//                  request, or NULL to clear.
+// @param user_data Opaque pointer passed back to every invocation.
+//
+// @return
+//   - `OVSTREAM_API_SUCCESS` on success.
+//   - `OVSTREAM_API_INVALID_ARGUMENT` if `server` is NULL.
+//
+// @ingroup callbacks
+//--------------------------------------------------------------
+OVSTREAM_API ovstream_result_t ovstream_set_resize_request_callback(ovstream_server_t* server,
+                                                                    ovstream_resize_request_callback_t callback,
+                                                                    void* user_data);
+
+//--------------------------------------------------------------
+// @brief Register (or clear) the client clipboard callback.
+//
+// Fires on WebRTC and native servers when a client syncs its
+// clipboard via the stream clipboard message. Chunked transfers
+// are reassembled and delivered once complete; a transfer that
+// restarts, arrives out of order, or exceeds 16 MiB resets the
+// reassembly state with a warning. Registration succeeds on other
+// backends but the callback never fires there. See
+// `ovstream_set_connection_callback` for thread-safety and
+// registration semantics.
+//
+// @param server    The server handle.
+// @param callback  Callback to invoke for each completed clipboard
+//                  transfer, or NULL to clear.
+// @param user_data Opaque pointer passed back to every invocation.
+//
+// @return
+//   - `OVSTREAM_API_SUCCESS` on success.
+//   - `OVSTREAM_API_INVALID_ARGUMENT` if `server` is NULL.
+//
+// @ingroup callbacks
+//--------------------------------------------------------------
+OVSTREAM_API ovstream_result_t ovstream_set_clipboard_callback(ovstream_server_t* server,
+                                                               ovstream_clipboard_callback_t callback,
+                                                               void* user_data);
+
+//--------------------------------------------------------------
+// @brief Register (or clear) the streaming QoS status callback.
+//
+// Fires on WebRTC and native servers whenever the streaming
+// backend publishes updated network feedback (see
+// `ovstream_qos_status_t`). The recommended resolution and frame
+// rate are hints only -- the SDK never resizes or re-paces the
+// stream on its own. Pairs with `webrtc.resizable`: an
+// application can re-render at the recommended size and let
+// per-frame dimensions apply it. Update cadence is backend- and
+// connection-dependent; there is no guaranteed rate, and no
+// updates may arrive at all on an idle or loopback connection.
+// Registration succeeds on other backends but the callback never
+// fires there. See `ovstream_set_connection_callback` for
+// thread-safety and registration semantics.
+//
+// @param server    The server handle.
+// @param callback  Callback to invoke on each QoS update, or NULL
+//                  to clear.
+// @param user_data Opaque pointer passed back to every invocation.
+//
+// @return
+//   - `OVSTREAM_API_SUCCESS` on success.
+//   - `OVSTREAM_API_INVALID_ARGUMENT` if `server` is NULL.
+//
+// @ingroup callbacks
+//--------------------------------------------------------------
+OVSTREAM_API ovstream_result_t ovstream_set_qos_callback(ovstream_server_t* server,
+                                                         ovstream_qos_callback_t callback,
+                                                         void* user_data);
+
+//--------------------------------------------------------------
+// @brief Send clipboard text to the connected client.
+//
+// Sends the text as a stream clipboard message on WebRTC and
+// native servers. Transfers larger than one transport message are
+// chunked automatically (split on UTF-8 code point boundaries);
+// the browser client reassembles the parts onto its clipboard.
+// Concurrent calls serialize; chunks of two transfers never
+// interleave.
+//
+// @param server The started server handle.
+// @param text   UTF-8 clipboard contents. Input-string contract:
+//               `text.ptr` is read for exactly `text.length` bytes
+//               and is NOT required to be null-terminated. An
+//               empty view is rejected.
+//
+// @return
+//   - `OVSTREAM_API_SUCCESS` on success.
+//   - `OVSTREAM_API_INVALID_ARGUMENT` if `server` is NULL or
+//     `text` is empty.
+//   - `OVSTREAM_API_INVALID_STATE` if the server has not been
+//     started or no client is connected.
+//   - `OVSTREAM_API_NOT_SUPPORTED` on RTSP, SHM, and CUDASHM
+//     servers.
+//
+// @ingroup streaming
+//--------------------------------------------------------------
+OVSTREAM_API ovstream_result_t ovstream_send_clipboard(ovstream_server_t* server,
+                                                       ovstream_string_t text);
+
+//--------------------------------------------------------------
+// @brief Send an application message to the connected client.
+//
+// Wraps `payload` in the app-recipient message envelope shared with
+// the browser client (`{"messageType":"json","messageRecipient":
+// "app","data":"<payload>"}`) and sends it on WebRTC and native
+// servers, so a stock browser client delivers the payload to its
+// application message handler. This is the outbound counterpart of
+// `ovstream_set_app_message_callback`, which delivers inbound app
+// envelopes unwrapped. The payload is not chunked: the wrapped
+// envelope must fit the 65535 byte transport limit, so split larger
+// payloads into self-describing parts the way inbound chunked app
+// messages are.
+//
+// @param server  The started server handle.
+// @param payload UTF-8 JSON text. The envelope declares its payload
+//                as JSON and the browser client parses it before
+//                delivering it, so non-JSON text is accepted here but
+//                rejected by that client. Input-string contract:
+//                `payload.ptr` is read for exactly `payload.length`
+//                bytes and is NOT required to be null-terminated. An
+//                empty view is rejected.
+//
+// @return
+//   - `OVSTREAM_API_SUCCESS` on success.
+//   - `OVSTREAM_API_INVALID_ARGUMENT` if `server` is NULL, `payload`
+//     is empty, or `payload` or the wrapped envelope exceeds 65535
+//     bytes.
+//   - `OVSTREAM_API_INVALID_STATE` if the server has not been
+//     started or no client is connected.
+//   - `OVSTREAM_API_NOT_SUPPORTED` on RTSP, SHM, and CUDASHM
+//     servers.
+//
+// @ingroup streaming
+//--------------------------------------------------------------
+OVSTREAM_API ovstream_result_t ovstream_send_app_message(ovstream_server_t* server,
+                                                         ovstream_string_t payload);
+
+//--------------------------------------------------------------
+// @brief Inform connected clients of the current mouse cursor shape.
+//
+// Sends the cursor name as a stream cursor message on WebRTC and
+// native servers so a client can reflect application-side cursor
+// changes. The name is an open string: stock browser-client names
+// are `Arrow` (the initial state), `IBeam`, `Hand`, `Crosshair`,
+// `VerticalResize`, and `HorizontalResize`, and custom names pass
+// through unchanged. Setting the current name again is a no-op
+// (deduplicated); a client that connects later receives the
+// current name in the config handshake response. The name resets
+// to `Arrow` when the server stops.
+//
+// @param server      The started server handle.
+// @param cursor_name Cursor name. Input-string contract:
+//                    `cursor_name.ptr` is read for exactly
+//                    `cursor_name.length` bytes and is NOT
+//                    required to be null-terminated. An empty
+//                    view is rejected.
+//
+// @return
+//   - `OVSTREAM_API_SUCCESS` on success (including deduplicated
+//     no-ops and changes recorded while no client is connected).
+//   - `OVSTREAM_API_INVALID_ARGUMENT` if `server` is NULL or
+//     `cursor_name` is empty.
+//   - `OVSTREAM_API_INVALID_STATE` if the server has not been
+//     started.
+//   - `OVSTREAM_API_NOT_SUPPORTED` on RTSP, SHM, and CUDASHM
+//     servers.
+//
+// @ingroup streaming
+//--------------------------------------------------------------
+OVSTREAM_API ovstream_result_t ovstream_set_cursor(ovstream_server_t* server,
+                                                   ovstream_string_t cursor_name);
 
 //--------------------------------------------------------------
 // @brief Set (or clear) the server's ICE servers for WebRTC NAT traversal.

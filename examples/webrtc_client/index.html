@@ -142,6 +142,9 @@ its affiliates is strictly prohibited.
                 <input type="number" id="signal-port" class="control port" value="49100" min="1" max="65535" />
                 <button id="connect-button" class="control">Connect</button>
                 <button id="disconnect-button" class="control" disabled>Disconnect</button>
+                <label for="fit-window">
+                    <input type="checkbox" id="fit-window" /> Fit to window
+                </label>
                 <span id="status" class="status ready">Ready</span>
             </div>
 
@@ -161,26 +164,64 @@ its affiliates is strictly prohibited.
         </div>
 
         <!--
-            Classic (non-module) script so file:// opens work. The bundle's
-            final line was patched at vendor time from
-              export{Na as AppStreamer, ...}
-            to
-              window.OVWebRTC = {AppStreamer: Na, StreamType: bl, ...}
-            so the library exposes a global instead of ES exports. Re-apply
-            that patch when re-syncing the bundle.
+            The client library creates message ids with crypto.randomUUID(),
+            which browsers only expose in secure contexts (https://, or
+            http://localhost). This page is commonly opened over plain
+            http:// from another machine, so provide the same function
+            from crypto.getRandomValues(), which is always available.
         -->
-        <script src="./omniverse-webrtc-streaming-library.js"></script>
+        <script>
+            if (window.crypto && !window.crypto.randomUUID) {
+                window.crypto.randomUUID = function () {
+                    const bytes = crypto.getRandomValues(new Uint8Array(16));
+                    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+                    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+                    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+                    return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) +
+                        '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+                };
+            }
+        </script>
+        <!--
+            The UMD build of @nvidia/ov-web-rtc (dist/ov-web-rtc.umd.cjs in
+            the npm package, vendored unmodified) exposes the library as the
+            window.OVWebRTC global, so a classic script tag works from
+            file:// with no module loader and no build step.
+        -->
+        <script src="./ov-web-rtc.umd.cjs"></script>
         <script>
             const { AppStreamer, StreamType } = window.OVWebRTC;
+            const streamer = new AppStreamer();
 
             const serverIpInput = document.getElementById('server-ip');
             const signalPortInput = document.getElementById('signal-port');
             const connectButton = document.getElementById('connect-button');
             const disconnectButton = document.getElementById('disconnect-button');
+            const fitWindowCheckbox = document.getElementById('fit-window');
             const statusEl = document.getElementById('status');
             const loadingInfo = document.getElementById('loading-info');
 
             let connected = false;
+
+            // Ask the server to resize the stream to the visible area.
+            // Honored only when the server was started with
+            // webrtc.resizable and has a resize-request callback (the
+            // config handshake reports availability as
+            // allow_dynamic_resize); otherwise the server drops the
+            // request with a warning.
+            function sendResize() {
+                if (!connected || !fitWindowCheckbox.checked) return;
+                const content = document.querySelector('.stream-content');
+                if (!content) return;
+                const width = Math.floor(content.clientWidth);
+                const height = Math.floor(content.clientHeight);
+                if (width <= 0 || height <= 0) return;
+                streamer.resize(width, height).catch((e) =>
+                    console.warn('resize request failed:', e));
+            }
+
+            fitWindowCheckbox.addEventListener('change', sendResize);
+            window.addEventListener('resize', sendResize);
 
             function setStatus(cls, text) {
                 statusEl.className = 'status ' + cls;
@@ -215,17 +256,18 @@ its affiliates is strictly prohibited.
                 setControlsConnected(true);
 
                 try {
-                    // Note: the server dictates the stream resolution
+                    // The server dictates the initial stream resolution
                     // (whatever was passed to ovstream_start); the client
-                    // deliberately does not send width/height here.
-                    // Client-driven resize is not currently supported.
-                    const result = await AppStreamer.connect({
+                    // deliberately does not send width/height here. The
+                    // "Fit to window" toggle requests resizes after
+                    // connecting.
+                    const result = await streamer.connect({
                         streamSource: StreamType.DIRECT,
                         logLevel: 2,
                         streamConfig: {
                             videoElementId: 'remote-video',
                             audioElementId: 'remote-audio',
-                            server,
+                            signalingServer: server,
                             signalingPort,
                             fps: 60,
                             maxReconnects: 3,
@@ -269,6 +311,10 @@ its affiliates is strictly prohibited.
                                     if (video) {
                                         video.focus();
                                     }
+
+                                    // Apply "Fit to window" if it was
+                                    // checked before connecting.
+                                    sendResize();
                                 } else if (msg.status === 'error') {
                                     console.error('Stream start error:', msg.info);
                                     setStatus('error', 'Error');
@@ -289,6 +335,16 @@ its affiliates is strictly prohibited.
                                 setControlsConnected(false);
                             },
                             onUpdate: (msg) => console.log('update', msg),
+                            // Application messages from the server
+                            // (send_app_message / AppMessenger). The
+                            // library reassembles multi-part messages
+                            // before delivering them here. Cursor
+                            // changes (set_cursor) are applied to the
+                            // video element by the library; only custom
+                            // cursor names need an onCursor handler. The
+                            // browser-app-messages connectivity test reads
+                            // this console line.
+                            onCustomEvent: (msg) => console.log('app message', msg),
                         },
                     });
                     console.log('connect() returned', result);
@@ -304,7 +360,7 @@ its affiliates is strictly prohibited.
                 if (!connected) return;
                 setLoading('Disconnecting...');
                 try {
-                    await AppStreamer.terminate();
+                    await streamer.terminate();
                 } catch (err) {
                     console.error('Disconnect threw:', err);
                 }
@@ -329,7 +385,7 @@ its affiliates is strictly prohibited.
             }
 
             window.addEventListener('beforeunload', () => {
-                if (connected) AppStreamer.terminate();
+                if (connected) streamer.terminate();
             });
         </script>
     </body>

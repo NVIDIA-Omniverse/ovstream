@@ -85,6 +85,7 @@ C:
 ## Resilience
 
 - If the connection drops (producer exits or the network breaks), `wait_frame` returns a timeout / invalid-state result and `is_alive` flips. The consumer should detect that and exit cleanly.
+- A native client receives server-to-client stream control messages (cursor changes, clipboard transfers, config handshake responses) as raw JSON envelopes on its message callback — ignore envelopes you don't recognize. Raw bytes remain the intended client-to-server channel; the JSON envelope protocol (see the `stream-messages` skill) exists for the browser client.
 - Producer or consumer can start first; the consumer waits via the retry-on-connect loop above.
 
 ## Key Types / Functions

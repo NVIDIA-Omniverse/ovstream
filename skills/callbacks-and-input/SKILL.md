@@ -12,13 +12,19 @@ WebRTC, native, SHM, and CUDASHM servers all have **reverse channels** that surf
 | Callback        | Fires when                                      | Available on |
 |-----------------|-------------------------------------------------|--------------|
 | `on_connection` | A client connects or disconnects                | All transports |
-| `on_message`    | The client sends a text/binary message          | WebRTC, native, SHM, CUDASHM |
+| `on_message`    | The client sends a raw text/binary message the protocol layer does not own | WebRTC, native, SHM, CUDASHM |
 | `on_input`      | The client emits a keyboard / mouse / gamepad / touch event | WebRTC, native, SHM, CUDASHM |
 | `on_unicode`    | The client emits a composed text event (IME, on-screen kbd, paste, emoji) | WebRTC, native, SHM, CUDASHM |
+| `on_app_message` | The client sends an application-addressed message envelope (delivered unwrapped) | WebRTC, native |
+| `on_resize_request` | The client requests new stream dimensions (validated) | WebRTC, native |
+| `on_clipboard`  | The client syncs its clipboard (chunked transfers reassembled) | WebRTC, native |
+| `on_qos`        | The streaming backend publishes network feedback (recommended resolution / fps, RTT, bitrates) | WebRTC, native |
 
 RTSP has no input or message channel — only the connection callback fires. SHM and CUDASHM both carry the reverse channel over a local control socket / named pipe (sibling to the pixel transport).
 
-You can also push outbound text/binary to connected clients via `send_message` / `ovstream_send_message`.
+On WebRTC/native, JSON message envelopes addressed to the stream itself (the browser client's config handshake, resize, clipboard) are consumed by the SDK and delivered via the typed callbacks; `on_message` receives everything else byte-identical. See the `stream-messages` skill for the envelope format, routing rules, and the outbound `set_cursor` / `send_clipboard` calls.
+
+You can also push outbound text/binary to connected clients via `send_message` / `ovstream_send_message` (raw, for native/bespoke clients) or `send_app_message` / `ovstream_send_app_message` (wrapped in the app envelope the browser client routes to its application handler; see the `stream-messages` skill).
 
 ## Threading contract
 
@@ -74,7 +80,7 @@ if (!OVSTREAM_OK(ovstream_send_message(server, msg))) {
 }
 ```
 
-UTF-8 only. WebRTC and native messages are limited to `UINT16_MAX` (65535) bytes due to the underlying StreamSDK data-channel limit; longer messages are rejected with `INVALID_ARGUMENT`. SHM and CUDASHM have no such limit — messages of any size are forwarded over the local control channel (capped only at the 16 MiB defense-in-depth ceiling on each individual line). RTSP returns `NOT_SUPPORTED`. For larger payloads on WebRTC/native (e.g. clipboard transfers), chunk at the application layer; ovstream does not provide a built-in chunking helper.
+UTF-8 only. WebRTC and native messages are limited to `UINT16_MAX` (65535) bytes due to the underlying StreamSDK data-channel limit; longer messages are rejected with `INVALID_ARGUMENT`. SHM and CUDASHM have no such limit — messages of any size are forwarded over the local control channel (capped only at the 16 MiB defense-in-depth ceiling on each individual line). RTSP returns `NOT_SUPPORTED`. Clipboard transfers get chunking for free via `send_clipboard` (see the `stream-messages` skill); for other large payloads on WebRTC/native, chunk at the application layer.
 
 ## String contract
 

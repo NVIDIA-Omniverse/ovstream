@@ -24,6 +24,8 @@ skills/
   application-flow/SKILL.md
   server-creation/SKILL.md
   streaming-frames/SKILL.md
+  stream-messages/SKILL.md
+  app-messaging/SKILL.md
   protocol-selection/SKILL.md
   callbacks-and-input/SKILL.md
   cuda-interop/SKILL.md
@@ -31,6 +33,11 @@ skills/
   shm-consumers/SKILL.md
   cudashm-consumers/SKILL.md
   native-consumers/SKILL.md
+  webrtc-connection-diagnostics/SKILL.md
+  composing-libraries/SKILL.md
+  frame-generation-streaming/SKILL.md
+  remote-input-to-ui/SKILL.md
+  resizable-streams/SKILL.md
 ```
 
 ## SKILL.md Format

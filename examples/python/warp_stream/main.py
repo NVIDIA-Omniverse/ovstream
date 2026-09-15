@@ -141,7 +141,13 @@ def main():
     ]
 
     W, H = 1920, 1080
+    render_size = [W, H]  # Mutated by client resize requests.
     frame_count = 0
+
+    # RTSP streams are fixed-size; when transports are mixed off the one
+    # producer, skip client-driven resize so every server accepts the
+    # shared frame.
+    any_fixed_size = any(t == ovstream.ServerType.RTSP for t, _, _ in specs)
 
     ovstream.initialize(
         log_fn=lambda level, ch, msg, ts: print(f"[{level.name}][{ch}] {msg}"),
@@ -168,10 +174,25 @@ def main():
                     if event.type == ovstream.InputEventType.KEYBOARD else None
                 )
 
+            # Stream control messages (client resize requests, clipboard
+            # sync) are WebRTC/native only; register the resize callback
+            # before start() so the config handshake reports resize as
+            # available.
+            if not any_fixed_size:
+                def on_resize(width, height, lbl=label):
+                    print(f"\n[{lbl}] Client requested a resize to {width}x{height}")
+                    render_size[0] = width
+                    render_size[1] = height
+                s.on_resize_request = on_resize
+            s.on_clipboard = lambda text, lbl=label: print(f"\n[{lbl}] Client clipboard: {text}")
+
             cfg = ovstream.ServerConfig(
                 width=W,
                 height=H,
                 video_input=ovstream.VideoInput.TENSOR,
+                # W x H becomes the maximum resolution; the loop renders
+                # at whatever size the client last requested.
+                webrtc_resizable=not any_fixed_size,
                 # Pin the encoder/copy to cuda:0 (where the frames live) and
                 # hand it the producer's CUDA context. The default would be
                 # the display GPU on a multi-GPU host; cuda_device without
@@ -195,6 +216,10 @@ def main():
 
             s.start(cfg)
 
+            # Cursor forwarding is WebRTC/native only.
+            if server_type in (ovstream.ServerType.WEBRTC, ovstream.ServerType.NATIVE):
+                s.set_cursor("Crosshair")
+
             if server_type == ovstream.ServerType.RTSP:
                 print(f"[{label}] rtsp://localhost:{detail or 8554}/stream")
             elif server_type == ovstream.ServerType.SHM:
@@ -211,7 +236,11 @@ def main():
         print("Press Ctrl+C to stop.")
 
         # [snippet:warp-buffer-alloc]
-        buf = wp.zeros((H, W, 4), dtype=wp.uint8, device="cuda:0")
+        # Resizable WebRTC streams hand this buffer to the encoder without a copy,
+        # and the encoder cannot register memory from a CUDA memory pool (Warp's
+        # default allocator), so the frame buffer is allocated outside the pool.
+        with wp.ScopedMempool("cuda:0", False):
+            buf = wp.zeros((H, W, 4), dtype=wp.uint8, device="cuda:0")
         # [/snippet:warp-buffer-alloc]
 
         # CUDA stream + event reused across frames: record the event
@@ -230,11 +259,16 @@ def main():
                 while True:
                     t = loop.tick()
 
-                    wp.launch(draw_gradient, dim=(W, H, 4), inputs=[buf, t.frame_index], device="cuda:0")
+                    # The buffer is allocated once at the maximum; the
+                    # frame renders at the client's last requested size
+                    # and the sub-view's per-frame dimensions resize the
+                    # stream.
+                    rw, rh = render_size
+                    wp.launch(draw_gradient, dim=(rw, rh, 4), inputs=[buf, t.frame_index], device="cuda:0")
                     draw_stream.record_event(draw_event)
 
                     video_frame = ovstream.VideoFrame.from_dlpack(
-                        buf,
+                        buf[:rh, :rw],
                         sync=ovstream.CudaSync(
                             stream=draw_stream.cuda_stream,
                             wait_event=draw_event.cuda_event,

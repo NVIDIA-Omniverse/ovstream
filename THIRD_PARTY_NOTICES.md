@@ -31,6 +31,13 @@ ovstream binary distributions bundle a small number of third-party components al
 - **Attribution:** `dlpack — https://github.com/dmlc/dlpack — Copyright (c) 2017 by Contributors — Licensed under Apache License 2.0`.
 - **Where to find the binding text:** `PACKAGE-LICENSES/dlpack-LICENSE.txt`.
 
+### RapidJSON
+
+- **License:** [MIT License](https://github.com/Tencent/rapidjson/blob/master/license.txt).
+- **What it is:** A header-only C++ JSON parser and generator. Used internally for parsing and serializing JSON messages. The headers live in ovstream's source tree for implementation use only — they are not redistributed as files and never appear in ovstream's public headers, but the parsing code is compiled into the shipped binary. Only the MIT-licensed header tree is vendored; upstream's separately-licensed components (`msinttypes/`, `bin/jsonchecker/`) are excluded.
+- **Attribution:** `RapidJSON — https://github.com/Tencent/rapidjson — Copyright (C) 2015 THL A29 Limited, a Tencent company, and Milo Yip — Licensed under the MIT License` (vendored from upstream master commit `24b5e7a8`, 2025-02-05).
+- **Where to find the binding text:** `PACKAGE-LICENSES/rapidjson-LICENSE.txt` (the upstream license file verbatim; its BSD and JSON-license sections apply only to the excluded components).
+
 ### CUDA runtime (`cudart`)
 
 - **License:** [NVIDIA CUDA Toolkit End-User License Agreement](https://docs.nvidia.com/cuda/eula/index.html). The redistributable runtime components (`cudart`) ship under ovstream's own NVIDIA Proprietary terms — see `PACKAGE-LICENSES/ovstream-LICENSE.txt` — as permitted by the CUDA EULA's redistribution clause.

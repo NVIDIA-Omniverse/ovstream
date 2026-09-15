@@ -12,17 +12,20 @@
 # /// script
 # requires-python = ">=3.10,<3.14"
 # dependencies = [
-#     "ovstream",
-#     "ovrtx",
-#     "warp-lang",
+#     "ovstream>=0.5",
+#     "ovrtx>=0.5,<0.7",
+#     "ovstage>=0.2",
+#     "numpy",
 # ]
 # ///
 
 """Stream the stock ovrtx minimal-example scene via OVSTREAM.
 
-ovrtx renders the Robot-OVRTX scene directly into CUDA memory; a short
-Warp kernel swizzles RGBA8 -> BGRA8 in a long-lived stream buffer; and
-OVSTREAM wraps that buffer as a VideoFrame each iteration.
+ovstage owns the scene, ovrtx renders it, and OVSTREAM streams it.
+stream_scene.usda wraps the stock robot scene and adds a RenderProduct
+whose colour output is swizzled to BGRA8 by an ovrtx Sensor Processing
+Graph node, so the mapped CUDA buffer is handed to OVSTREAM as-is: no
+copy, no kernel, no Warp.
 
 By default the camera orbits the robot slowly (Y-axis rotation at about
 a full turn every 20 s). Any transport with a reverse input channel
@@ -35,7 +38,7 @@ a full turn every 20 s). Any transport with a reverse input channel
 RTSP has no input channel, so RTSP clients just see the auto-orbit.
 
 Requires:
-    pip install ovstream ovrtx warp-lang
+    pip install ovstream ovrtx ovstage numpy
 
 Usage:
     python main.py                      (no args: WebRTC on default signal port)
@@ -54,32 +57,30 @@ use. This is an ovrtx startup cost, not a streaming-pipeline cost.
 
 import math
 import sys
+from pathlib import Path
 
 import numpy as np
 
 try:
     import ovrtx
+    import ovstage
 except ImportError:
-    print("This example requires ovrtx: pip install ovrtx", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    import warp as wp
-except ImportError:
-    print("This example requires NVIDIA Warp: pip install warp-lang", file=sys.stderr)
+    print("This example requires ovrtx and ovstage: pip install ovrtx ovstage", file=sys.stderr)
     sys.exit(1)
 
 import ovstream
 import ovstream_utils
 
-wp.init()
 
-
-# Stock scene from the ovrtx Python minimal example.
-# https://github.com/NVIDIA-Omniverse/ovrtx/blob/main/examples/python/minimal/main.py
-USD_URL = "https://omniverse-content-production.s3.us-west-2.amazonaws.com/Samples/Robot-OVRTX/robot-ovrtx.usda"
-RENDER_PRODUCT = "/Render/Camera"
+# stream_scene.usda sublayers the stock ovrtx robot scene and adds the
+# RenderProduct /Render/Stream. That product renders the scene camera and
+# publishes two outputs: LdrColor, the renderer's RGBA8 colour output, and
+# BgraColor, the same image with red and blue exchanged by the SPG Swizzle
+# node, which is the BGRA8 layout OVSTREAM expects.
+SCENE_PATH = str(Path(__file__).with_name("stream_scene.usda"))
 CAMERA_PRIM = "/World/Camera"
+RENDER_PRODUCT = "/Render/Stream"
+BGRA_VAR = RENDER_PRODUCT + "/BgraColor"
 
 # Scene is Z-up. The robot stands at roughly (0, 0, 0..1.5); aim the
 # camera at a point inside its torso. Values derived from the initial
@@ -258,14 +259,31 @@ def compute_camera_matrix(t: float) -> np.ndarray:
     return M
 
 
-# RGBA8 -> BGRA8 swap. ovrtx emits LdrColor as RGBA8; OVSTREAM wants BGRA8.
-@wp.kernel
-def swap_rb(buf: wp.array3d(dtype=wp.uint8)):
-    x, y = wp.tid()
-    r = buf[y, x, 0]
-    b = buf[y, x, 2]
-    buf[y, x, 0] = b
-    buf[y, x, 2] = r
+class CameraWriter:
+    """Publishes the camera transform to ovstage once per frame.
+
+    One query is created up front and reused; each write is published under
+    a fresh ordinal, and the renderer is then stepped at that ordinal.
+    """
+
+    def __init__(self, stage, prim_path: str):
+        self._stage = stage
+        self._paths = ovstage.PathDictionary(stage)
+        self._path_list = self._paths.create_path_list_from_strings([prim_path])
+        self._query = stage.query_from_path_list(self._path_list)
+        self._attribute = self._paths.intern_token("omni:xform")
+        self._dtype = ovstage.numpy_to_dldatatype(np.dtype(np.float64), lanes=16)
+
+    def write(self, matrix: np.ndarray, ordinal: int) -> None:
+        tensor = ovstage.make_dltensor(matrix.reshape(1, 4, 4), dtype=self._dtype, shape=[1], ndim=1)
+        self._stage.write_attribute(self._query, self._attribute, ordinal=ordinal,
+                                    tensors=tensor, is_array=False).wait()
+        self._stage.advance_write_floor(ordinal, ovstage.Scope.ALL).wait()
+
+    def release(self) -> None:
+        self._query.release().wait()
+        self._paths.destroy_path_list(self._path_list)
+        self._paths.destroy()
 
 
 def main():
@@ -273,66 +291,46 @@ def main():
         (ovstream.ServerType.WEBRTC, 0, "WebRTC:49100"),
     ]
 
-    print("Creating ovrtx renderer (first run compiles and caches shaders)...", file=sys.stderr)
-    renderer = ovrtx.Renderer()
-    print(f"Loading USD scene: {USD_URL}", file=sys.stderr)
-    renderer.open_usd(USD_URL)
-
-    # Bind the camera's xform attribute so we can animate it per-frame
-    # without editing the USD (same pattern as the ovrtx planet-system
-    # example, but for a single prim). Map to CPU each frame -- a 64-byte
-    # transform has no benefit from staying on the GPU.
-    camera_binding = renderer.bind_attribute(
-        prim_paths=[CAMERA_PRIM],
-        attribute_name="omni:xform",
-        dtype="float64",
-        shape=(4, 4),
-        prim_mode=ovrtx.PrimMode.MUST_EXIST,
-    )
-
-    target_frame_time = 1.0 / 60.0
-
-    # Warm-up step to discover the camera's authored resolution so the
-    # server's declared extents match what ovrtx actually produces.
-    # (If the camera is authored at 1920x1080, we configure the server
-    # for exactly that; starting at a mismatched resolution would make
-    # every stream_video reject the frame.)
-    with camera_binding.map(device=ovrtx.Device.CPU) as m:
-        wp.from_dlpack(m.tensor).numpy().reshape(1, 4, 4)[0] = compute_camera_matrix(0.0)
-    products = renderer.step(render_products={RENDER_PRODUCT},
-                             delta_time=target_frame_time)
-    first_frame = next(iter(next(iter(products.values())).frames))
-    with first_frame.render_vars["LdrColor"].map(device=ovrtx.Device.CUDA) as warmup:
-        tensor = wp.from_dlpack(warmup.tensor)
-        if tensor.ndim != 3 or tensor.shape[2] != 4 or tensor.dtype != wp.uint8:
-            raise RuntimeError(
-                f"LdrColor has unexpected shape/dtype {tensor.shape} / {tensor.dtype}; "
-                f"expected (H, W, 4) uint8. The example assumes RGBA8 LDR output."
-            )
-        height, width = int(tensor.shape[0]), int(tensor.shape[1])
-    print(f"Render output: {width}x{height} RGBA8", file=sys.stderr)
-
-    # Long-lived stream buffer. ovstream stages each frame into server-
-    # owned memory before stream_video returns, so this buffer is free
-    # to mutate on the next iteration immediately; reusing one buffer
-    # across frames just saves a per-frame allocation.
-    stream_buf = wp.zeros((height, width, 4), dtype=wp.uint8, device="cuda:0")
-
-    # CUDA stream + event for the producer-side sync hint passed to
-    # ovstream. The event is recorded on Warp's stream after each
-    # swap_rb kernel; ovstream waits on it instead of forcing a
-    # host-side wp.synchronize() between every frame.
-    draw_stream = wp.get_stream("cuda:0")
-    draw_event  = wp.Event(device="cuda:0")
-
-    # ovrtx renders the frames in Warp's CUDA context on cuda:0. StreamSDK
-    # needs that exact context to read them: a device ordinal alone is not
-    # enough and fails the encode on a multi-GPU host. Pass it to ovstream
-    # via cuda_context (paired with cuda_device below).
-    stream_cuda_context = int(wp.get_device("cuda:0").context)
-
+    # Everything created below is released in the finally, whether or not the scene
+    # load and warm-up succeed.
     ovstream.initialize()
+    renderer = stage = camera = None
     try:
+        print("Creating ovrtx renderer (first run compiles and caches shaders)...", file=sys.stderr)
+        renderer = ovrtx.Renderer()
+        stage = ovstage.Stage("ovstream.example.ovrtx_stream")
+        renderer.attach_ovstage(stage)
+
+        print(f"Loading USD scene: {SCENE_PATH}", file=sys.stderr)
+        ordinal = 1
+        ovstage.population.open_usd(stage, SCENE_PATH, ordinal=ordinal)
+        stage.advance_write_floor(ordinal, ovstage.Scope.ALL).wait()
+
+        camera = CameraWriter(stage, CAMERA_PRIM)
+        target_frame_time = 1.0 / 60.0
+
+        # Warm-up steps: the RenderProduct is picked up by the renderer one
+        # step after the stage is populated, so step until it appears and use
+        # it to discover the output resolution. The server's declared
+        # extents must match what ovrtx produces; a mismatch would make every
+        # stream_video reject the frame.
+        ordinal += 1
+        camera.write(compute_camera_matrix(0.0), ordinal)
+        for _ in range(10):
+            products = renderer.step(render_products={RENDER_PRODUCT}, delta_time=target_frame_time, ordinal=ordinal)
+            if RENDER_PRODUCT in list(products.keys()):
+                break
+        else:
+            raise RuntimeError(f"{RENDER_PRODUCT} did not become available")
+        mapping = products[RENDER_PRODUCT].frames[0].render_vars[BGRA_VAR].map(device=ovrtx.Device.CUDA)
+        shape = tuple(mapping.shape)
+        mapping.unmap()
+        del mapping, products
+        if len(shape) != 3 or shape[2] != 4:
+            raise RuntimeError(f"BgraColor has unexpected shape {shape}; expected (H, W, 4) uint8")
+        height, width = int(shape[0]), int(shape[1])
+        print(f"Render output: {width}x{height} BGRA8", file=sys.stderr)
+
         servers = []
         for server_type, detail, label in specs:
             s = ovstream.Server(server_type)
@@ -348,13 +346,11 @@ def main():
                                ovstream.ServerType.CUDASHM):
                 s.on_input = make_input_handler()
 
-            # Pin the encoder to cuda:0 (where the frames live) and hand it
-            # the producer's CUDA context. The default would be the display
-            # GPU on a multi-GPU host; cuda_device without cuda_context fails
-            # the encode for a producer that uses its own CUDA context.
-            cfg = ovstream.ServerConfig(width=width, height=height,
-                                        cuda_device=0,
-                                        cuda_context=stream_cuda_context)
+            # ovrtx renders on GPU 0 in that device's primary CUDA context,
+            # so pinning the encoder to cuda_device=0 is enough here. A
+            # producer that renders in its own context must also pass
+            # cuda_context (see the warp_stream example).
+            cfg = ovstream.ServerConfig(width=width, height=height, cuda_device=0)
             if server_type == ovstream.ServerType.RTSP:
                 if detail:
                     cfg.stream_port = detail
@@ -403,10 +399,9 @@ def main():
                         loop_start_ns = tick.start_time_ns
                     elapsed_seconds = (tick.start_time_ns - loop_start_ns) / 1e9
 
-                    # Update the camera pose before stepping the renderer.
-                    with camera_binding.map(device=ovrtx.Device.CPU) as m:
-                        wp.from_dlpack(m.tensor).numpy().reshape(1, 4, 4)[0] = (
-                            compute_camera_matrix(elapsed_seconds))
+                    # Publish this frame's camera pose, then render at that ordinal.
+                    ordinal += 1
+                    camera.write(compute_camera_matrix(elapsed_seconds), ordinal)
 
                     # First tick reports delta_time_seconds == 0.0 (no
                     # previous frame to measure against); fall back to
@@ -416,39 +411,35 @@ def main():
                     products = renderer.step(
                         render_products={RENDER_PRODUCT},
                         delta_time=delta_time,
+                        ordinal=ordinal,
                     )
 
                     # [snippet:compose-ovrtx]
-                    # Copy ovrtx's transient LdrColor tensor into the
-                    # long-lived stream buffer, then swizzle in place
-                    # (ovrtx emits RGBA8 today; ovstream wants BGRA8).
-                    for _name, product in products.items():
-                        for frame in product.frames:
-                            with frame.render_vars["LdrColor"].map(
-                                    device=ovrtx.Device.CUDA) as mapping:
-                                source = wp.from_dlpack(mapping.tensor)
-                                wp.copy(stream_buf, source)
-                    wp.launch(swap_rb, dim=(width, height),
-                              inputs=[stream_buf], device="cuda:0")
-                    draw_stream.record_event(draw_event)
-
-                    # Hand the stream buffer to ovstream. The
-                    # `sync` hint lets ovstream chain off Warp's
-                    # CUDA stream without a host-side
-                    # wp.synchronize() between every frame.
-                    video_frame = ovstream.VideoFrame.from_cuda_array(
-                        stream_buf,
-                        sync=ovstream.CudaSync(
-                            stream=draw_stream.cuda_stream,
-                            wait_event=draw_event.cuda_event,
-                        ),
-                    )
-                    for s in servers:
-                        try:
-                            s.stream_video(video_frame)
-                        except ovstream.OvstreamError:
-                            pass  # e.g. no client connected yet; drop silently
+                    # Map the BGRA8 output to CUDA and hand the mapped
+                    # buffer straight to ovstream. The mapping's
+                    # producer-done event is passed as the sync hint so
+                    # ovstream waits for the render on the GPU rather
+                    # than the host; ovstream stages the frame before
+                    # stream_video returns, so the mapping can be
+                    # released immediately afterwards.
+                    for frame in products[RENDER_PRODUCT].frames:
+                        mapping = frame.render_vars[BGRA_VAR].map(device=ovrtx.Device.CUDA)
+                        video_frame = ovstream.VideoFrame(
+                            buffer=int(mapping.data),
+                            width=width,
+                            height=height,
+                            pitch_bytes=width * 4,
+                            sync=ovstream.CudaSync(wait_event=int(mapping.wait_event or 0)),
+                        )
+                        for s in servers:
+                            try:
+                                s.stream_video(video_frame)
+                            except ovstream.OvstreamError:
+                                pass  # e.g. no client connected yet; drop silently
+                        mapping.unmap()
+                        del mapping
                     # [/snippet:compose-ovrtx]
+                    del products
 
                     print(f"\rFPS: {tick.stats.fps_current}", end="", flush=True)
                     frame_count = tick.frame_index + 1
@@ -462,9 +453,16 @@ def main():
                 pass
             s.close()
 
-        camera_binding.unbind()
         print(f"\nDone. Streamed {frame_count} frames.")
     finally:
+        if camera is not None:
+            camera.release()
+        if renderer is not None and stage is not None:
+            renderer.detach_ovstage()
+        if stage is not None:
+            stage.destroy()
+        if renderer is not None:
+            renderer.destroy()
         ovstream.shutdown()
 
 

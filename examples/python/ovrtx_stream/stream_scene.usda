@@ -1,0 +1,38 @@
+#usda 1.0
+(
+    doc = "Wraps the stock ovrtx robot scene and adds a RenderProduct whose colour output is swizzled to BGRA8 for streaming."
+    subLayers = [
+        @https://omniverse-content-production.s3.us-west-2.amazonaws.com/Samples/Robot-OVRTX/robot-ovrtx.usda@
+    ]
+)
+
+def Scope "Render"
+{
+    def RenderProduct "Stream"
+    {
+        uniform int2 resolution = (1920, 1080)
+        rel camera = </World/Camera>
+        rel orderedVars = [ <LdrColor>, <BgraColor> ]
+
+        def RenderVar "LdrColor"
+        {
+            uniform string sourceName = "LdrColor"
+            opaque omni:rtx:aov
+        }
+
+        def RenderVar "BgraColor"
+        {
+            uniform string sourceName = "BgraColor"
+            opaque omni:rtx:aov.connect = <../Swizzle.outputs:Output>
+        }
+
+        def Shader "Swizzle"
+        {
+            uniform token info:implementationSource = "id"
+            uniform token info:id = "spg:rtx.spg.stdlib/Swizzle"
+            token inputs:swizzle = "zyxw"
+            opaque inputs:Input.connect = <../LdrColor.omni:rtx:aov>
+            opaque outputs:Output
+        }
+    }
+}

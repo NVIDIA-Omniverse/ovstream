@@ -225,6 +225,8 @@ __global__ void updateStars(Star* stars, uint8_t* framebuffer,
 static volatile bool g_running = true;
 static std::atomic<float> g_mouseX{ 0.0f };
 static std::atomic<float> g_mouseY{ 0.0f };
+static std::atomic<int> g_renderWidth{ 1920 };
+static std::atomic<int> g_renderHeight{ 1080 };
 
 void signalHandler(int sig)
 {
@@ -266,6 +268,24 @@ void onInput(ovstream_server_t* server, const ovstream_input_event_t* event, voi
             g_mouseY.store(static_cast<float>(event->mouse.y) / extentsY);
         }
     }
+}
+
+void onResizeRequest(ovstream_server_t* server, uint32_t width, uint32_t height, void* userData)
+{
+    (void)server;
+    (void)userData;
+    // The requested dimensions arrive validated (<= the configured
+    // maximum); the render loop picks them up on its next frame.
+    printf("\nClient requested a resize to %ux%u\n", width, height);
+    g_renderWidth.store(static_cast<int>(width));
+    g_renderHeight.store(static_cast<int>(height));
+}
+
+void onClipboard(ovstream_server_t* server, ovstream_string_t text, void* userData)
+{
+    (void)server;
+    (void)userData;
+    printf("\nClient clipboard: %s\n", text.ptr);
 }
 
 //--------------------------------------------------------------
@@ -382,6 +402,18 @@ int main(int argc, char** argv)
     const int HEIGHT = 1080;
     const int NUM_STARS = 5000;
 
+    // RTSP streams are fixed-size; when transports are mixed off the
+    // one producer, skip client-driven resize so every server accepts
+    // the shared frame.
+    bool anyFixedSizeServer = false;
+    for (const auto& spec : specs)
+    {
+        if (spec.type == OVSTREAM_SERVER_RTSP)
+        {
+            anyFixedSizeServer = true;
+        }
+    }
+
     std::vector<ServerInstance> servers;
 
     for (const auto& spec : specs)
@@ -419,6 +451,15 @@ int main(int argc, char** argv)
                 continue;
             }
         }
+        // Stream control messages (client resize requests, clipboard
+        // sync) are WebRTC/native only; registration must happen
+        // before start so the config handshake reports resize as
+        // available.
+        if (!anyFixedSizeServer)
+        {
+            (void)ovstream_set_resize_request_callback(inst.server, onResizeRequest, nullptr);
+        }
+        (void)ovstream_set_clipboard_callback(inst.server, onClipboard, nullptr);
 
         ovstream_server_config_t cfg;
         if (!OVSTREAM_OK(ovstream_config_defaults(&cfg)))
@@ -430,6 +471,9 @@ int main(int argc, char** argv)
         }
         cfg.width = WIDTH;
         cfg.height = HEIGHT;
+        // WIDTH x HEIGHT becomes the maximum resolution; the render
+        // loop draws at whatever size the client last requested.
+        cfg.webrtc.resizable = !anyFixedSizeServer;
 
         if (spec.type == OVSTREAM_SERVER_RTSP)
         {
@@ -461,6 +505,13 @@ int main(int argc, char** argv)
             fprintf(stderr, "Failed to start %s: %s\n", inst.label->c_str(), ovstream_get_last_error().ptr);
             (void)ovstream_destroy_server(inst.server);
             continue;
+        }
+
+        // Cursor forwarding is WebRTC/native only.
+        if (spec.type == OVSTREAM_SERVER_WEBRTC || spec.type == OVSTREAM_SERVER_NATIVE)
+        {
+            const char* cursorName = "Crosshair";
+            (void)ovstream_set_cursor(inst.server, ovstream_string_t{ cursorName, strlen(cursorName) });
         }
 
         if (spec.type == OVSTREAM_SERVER_RTSP)
@@ -581,17 +632,22 @@ int main(int argc, char** argv)
         const auto t = pacer.tick();
         const float dt = t.deltaTimeSeconds;
 
-        cudaMemsetAsync(d_framebuffer, 0, pitch * HEIGHT, drawStream);
+        // The framebuffer is allocated once at the maximum; the frame
+        // renders at the client's last requested size with the same
+        // pitch, and the per-frame dimensions resize the stream.
+        const int renderWidth = g_renderWidth.load();
+        const int renderHeight = g_renderHeight.load();
+        cudaMemsetAsync(d_framebuffer, 0, pitch * renderHeight, drawStream);
         updateStars<<<grid, block, 0, drawStream>>>(d_stars, d_framebuffer,
-                                                    WIDTH, HEIGHT, (int)pitch,
+                                                    renderWidth, renderHeight, (int)pitch,
                                                     NUM_STARS, dt, t.frameIndex,
                                                     g_mouseX.load(), g_mouseY.load());
         cudaEventRecord(drawEvent, drawStream);
 
         ovstream_video_frame_t frame = {};
         frame.buffer = d_framebuffer;
-        frame.width = WIDTH;
-        frame.height = HEIGHT;
+        frame.width = renderWidth;
+        frame.height = renderHeight;
         frame.pitch_bytes = (uint32_t)pitch;
         frame.sync.stream     = reinterpret_cast<uintptr_t>(drawStream);
         frame.sync.wait_event = reinterpret_cast<uintptr_t>(drawEvent);

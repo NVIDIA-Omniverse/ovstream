@@ -32,6 +32,8 @@ serve as the Python API reference.
     - [SHM (shared memory)](#shm-shared-memory-backend)
     - [CUDASHM (CUDA shared memory)](#cudashm-cuda-shared-memory-backend)
     - [NATIVE consumer client](#native-consumer-client)
+  - [Stream control messages](#stream-control-messages)
+  - [Resolution semantics](#resolution-semantics)
   - [Common gotchas](#common-gotchas)
     - [CUDA synchronization on `stream_video`](#cuda-synchronization-on-stream_video)
     - [BGRA channel order, NOT RGBA](#bgra-channel-order-not-rgba)
@@ -57,6 +59,7 @@ serve as the Python API reference.
   - [Memory model](#memory-model)
   - [Errors](#errors)
   - [What `ovstream_utils` deliberately is not](#what-ovstream_utils-deliberately-is-not)
+  - [Application messaging (`ovstream_utils.messaging`)](#application-messaging-ovstream_utilsmessaging)
 
 ---
 
@@ -133,9 +136,12 @@ API. It does not reach into the internals; it is purely a consumer.
 - `_server.py` — the `Server` class (context-manager friendly).
 
 The wheel is self-contained: the native libraries (`ovstream.dll` or
-`libovstream.so`, plus GStreamer and StreamSDK) are bundled
-alongside the Python package, so `pip install ovstream` works with
-no `PATH` / `LD_LIBRARY_PATH` tweaks.
+`libovstream.so`, plus GStreamer, StreamSDK and the CUDA runtime) are
+bundled alongside the Python package, so `pip install ovstream` works
+with no `PATH` / `LD_LIBRARY_PATH` tweaks. Those bundled runtimes are
+shared with any other library in the process that uses the same ones;
+see "One GStreamer and one CUDA runtime per process" under Common
+gotchas.
 
 ## Lazy backend registration
 
@@ -269,8 +275,8 @@ definition.
   never decodes. A one-time check on the first frame logs an error if
   the buffer's device doesn't match.
 - `cuda_context` is **required** alongside `cuda_device` when the
-  producer renders into its own CUDA context (Warp, ovrtx, most
-  renderers): StreamSDK copies the input through that context, and with
+  producer renders into its own CUDA context (Warp and most
+  renderers; ovrtx 0.5 render outputs live in the primary context): StreamSDK copies the input through that context, and with
   `cuda_context = 0` it falls back to the device's primary context,
   which cannot read a buffer owned by a different context — the copy
   fails with `CUDA error invalid argument: Copying device buffer to
@@ -442,9 +448,81 @@ This way `LogLevel.VERBOSE` via `ovstream.initialize(log_min_severity=…)`
 actually produces verbose dependency output, not just verbose
 SDK-wrapper output.
 
+## Stream control messages
+
+On WebRTC/native, clients exchange JSON *message envelopes* with the
+server over the custom-message data channel:
+
+```json
+{"messageType": "json", "messageRecipient": "<recipient>", "data": "<inner JSON as a string>"}
+```
+
+The wire format matches the kit-livestream extensions and the
+`@nvidia/ov-web-rtc` browser client. Inbound routing:
+
+- `messageRecipient: "stream"` — owned by the SDK, always consumed:
+  - `config` — the capability handshake. The response reports
+    `supports_localized_text_input` (always true),
+    `supports_large_messages` (always true), `allow_dynamic_resize`
+    (true only when the stream is resizable AND a resize-request
+    callback is registered), and `cursor_type` (the current cursor
+    name, seeding late-connecting clients).
+  - `resize` — validated (clamped to the stream maximum, alignment
+    rules applied) and delivered via the resize-request callback;
+    the application re-renders at the new size and per-frame
+    dimensions apply it.
+  - `clipboard` — reassembled from `part` / `numParts` chunks when
+    needed and delivered via the clipboard callback.
+- `messageRecipient: "app"` (or its pre-handshake alias `"kit"`) —
+  the envelope's inner `data` payload is delivered unwrapped via the
+  app-message callback; with no app-message callback registered the
+  full envelope falls back to the raw message callback. Chunked app
+  messages arrive as individual parts; the chunk metadata lives
+  inside the payload itself, so each part is self-describing and
+  reassembly is up to the application. Outbound,
+  `ovstream_send_app_message` wraps an application payload in the
+  same envelope.
+- Everything else — non-JSON payloads, JSON without the envelope
+  shape, other recipients — reaches the raw message callback
+  byte-identical. Raw bytes are the intended channel for
+  native/bespoke clients (`ovstream_client.h`), symmetric with
+  `ovstream_send_message`; such clients also receive server-to-client
+  cursor / clipboard / config-response envelopes raw and should
+  ignore unknown envelopes.
+
+Outbound, `ovstream_set_cursor` sends cursor-change messages
+(deduplicated) and `ovstream_send_clipboard` sends clipboard text,
+chunked so every message fits the 64 KB transport limit. Stream
+control messages are WebRTC/native only: the send functions return
+`NOT_SUPPORTED` on RTSP / SHM / CUDASHM, and callback registration
+succeeds on every backend but only fires there.
+
+QoS hints (`ovstream_set_qos_callback`) are related but are NOT
+stream messages: they are StreamSDK network feedback (recommended
+resolution / frame rate, round-trip delay, bitrates) delivered
+directly from the backend, with no wire message involved.
+
+## Resolution semantics
+
+`config.width` / `config.height` are the stream's **maximum**
+extents; whether the resolution may vary within them is per-backend:
+
+| Backend | Resolution |
+|---|---|
+| SHM / CUDASHM | Always resizable: slots are preallocated at the maximum, per-slot headers carry each frame's actual dimensions, and consumers react to changes (see the SHM wire protocol below). |
+| WebRTC / native | Opt-in via `webrtc.resizable`: per-frame dimensions set the current resolution, clamped to the maximum and floored to the alignment rules by the SDK (width to a multiple of 8, height to even) — unaligned dimensions are adjusted, not rejected. Trade-off: the encoder is preallocated at the maximum and StreamSDK's QoS-driven scaling + frame copying are disabled, so resolution is owned entirely by the application — and frames must come from a persistent allocation sized for the maximum (with frame copying disabled, the immediate-reuse buffer lifetime contract does not apply and per-frame reallocation is not supported). That allocation must be plain device memory (`cudaMalloc` / `cudaMallocPitch`): the encoder registers the buffer directly and cannot register memory from a CUDA memory pool (`cudaMallocAsync`, which is also Warp's default allocator), so `stream_video` rejects pool-allocated frames on a resizable stream with an explicit error rather than letting the encode session fail. Enabling it and continuing to submit fixed-size frames is also the supported way to opt out of QoS scaling. When false (the default), every frame must match `width` x `height` exactly. |
+| RTSP | Never: pipeline caps are fixed at start, and frames that differ from the configured size are rejected. |
+
+`webrtc.resizable` deliberately converges WebRTC/native onto the
+existing SHM convention rather than inventing a new one.
+Client-driven resize composes on top: the resize-request callback
+delivers the client's validated request, the application re-renders,
+and per-frame dimensions do the rest — the SDK never resizes on its
+own.
+
 ## Common gotchas
 
-Four things that bite production integrations more often than the rest of this document. The full contracts live in `ovstream_types.h` / `ovstream.h` and the per-skill files under `skills/`; this section is the consolidated reading order for someone integrating ovstream for the first time.
+The things that bite production integrations more often than the rest of this document. The full contracts live in `ovstream_types.h` / `ovstream.h` and the per-skill files under `skills/`; this section is the consolidated reading order for someone integrating ovstream for the first time.
 
 ### CUDA synchronization on `stream_video`
 
@@ -461,7 +539,7 @@ Leaving `sync` zero-init and relying on global device sync works correctness-wis
 
 All raw-CUDA video paths are BGRA8 — bytes per pixel, in this order: B, G, R, A. RGBA producers ship blue-tinted video and never see an error because the buffer is byte-correct, just channel-swapped. If your renderer outputs RGBA, swizzle producer-side before the `stream_video` call. Consumers of `OVSTREAM_VIDEO_INPUT_TENSOR` via DLPack are also responsible for delivering BGRA8-shaped tensors.
 
-Pitch is the second alignment surface. For raw CUDA, `pitch_bytes` should be at least `width * 4`, and is conventionally aligned to 64 bytes for DMA efficiency (the SHM/CUDASHM ring rounds its `maxPitchBytes` to 64 for the same reason). Even widths are required by the NVENC encoder used in WebRTC/native and the `gstnvenc`-fronted RTSP backend; odd widths fail the start handshake rather than silently rounding.
+Pitch is the second alignment surface. For raw CUDA, `pitch_bytes` should be at least `width * 4`, and is conventionally aligned to 64 bytes for DMA efficiency (the SHM/CUDASHM ring rounds its `maxPitchBytes` to 64 for the same reason). Even widths are required by the NVENC encoder used in WebRTC/native and the `gstnvenc`-fronted RTSP backend; odd `config.width` values fail the start handshake rather than silently rounding (per-frame dimensions on a resizable stream are floored instead — see Resolution semantics).
 
 ### Register callbacks BEFORE `ovstream_start`
 
@@ -480,6 +558,37 @@ The log callback is registered through `ovstream_init_config_t::log_callback` pa
 - The callback fires for SDK-internal messages AND for everything GStreamer / StreamSDK log. Use `log_min_severity` to filter: `OVSTREAM_LOG_VERBOSE` is firehose-level, `OVSTREAM_LOG_WARNING` is the recommended production default. `OVSTREAM_LOG_DEFAULT` (the zero-init value) is remapped to WARNING, so a `{0}`-initialized config is quiet by default.
 
 Python equivalent: `ovstream.initialize(log_fn=..., log_min_severity=...)` — same refcount-0→1 install rule.
+
+### Frame generation is a runtime finding
+
+DLSS Frame Generation is enabled by the renderer (ovrtx reads two attributes on the RenderProduct), not by ovstream, and whether it engages depends on the GPU, driver and render configuration. Do not assume it: count the frames each render step returns and pace the delivered stream from that. Generated frames add about one base-frame interval of presentation latency (the interpolated frame is shown before the simulated frame it leads to), so the smoothness gain is always reported next to that cost. ovstream sees only the presented frames; it needs no knowledge of which were generated.
+
+### One GStreamer and one CUDA runtime per process
+
+ovstream bundles GStreamer, GLib and the CUDA runtime so that installing it needs nothing else, and ovrtx bundles the same libraries. A process loads a given shared-library name once (`libcudart.so.12`, `libgstreamer-1.0.so.0`, `libglib-2.0.so.0` and their Windows equivalents), so with both libraries in one process whichever copy loaded first serves both. ovstream keeps that harmless by shipping the same builds ovrtx does, taken from the same dependency set:
+
+| ovstream | GStreamer | GLib | CUDA runtime | Validated in one process with |
+|---|---|---|---|---|
+| 0.5.0 | 1.28.6 | 2.88.0 | 12.8 | ovrtx 0.5.0 |
+
+Earlier ovstream releases bundled GStreamer 1.24 and CUDA runtime 12.0: alongside an ovrtx that loaded first they ran on ovrtx's copies, and alongside one that loaded second ovrtx ran on theirs. Keep the two on matching rows, or load ovrtx first.
+
+GStreamer is also *initialised* once per process, with the environment in effect at that moment, so ovstream does not rely on the environment to find its plugins: on the first RTSP server creation it registers its bundled plugin directory explicitly, whether or not another library initialised GStreamer first, and fails server creation with the names of any elements still missing. The log records which GStreamer runtime is live when it was not ovstream's own. The WebRTC, native, SHM and CUDASHM backends do not use GStreamer and are unaffected.
+
+### Resizable-stream buffers are registered, not copied
+
+On a resizable WebRTC/native stream the encoder registers the application's buffer directly. The buffer must be a persistent `cudaMalloc` allocation at the maximum size and cannot come from a CUDA memory pool (`cudaMallocAsync`, Warp's default); such frames are rejected with an explicit error (see Resolution semantics). The encoder may still be reading the buffer after `stream_video` returns, so a producer keeps a small ring of slots rather than rewriting the one it just submitted.
+
+## Composing with other OV libraries
+
+ovstream is one library in an application built from several. `examples/python/app_stream` is the reference implementation of that composition (ovrtx renders, ovstage owns the scene, ovui draws the control panel, ovstream delivers) and is the place to look for the patterns below in working code:
+
+- **One thread, two cadences.** The application loop runs at the delivered rate (`ovstream_utils.Loop`); the renderer is stepped at the base rate through its asynchronous API and polled without blocking, so a slow step never stalls presentation. With frame generation active the base rate is the delivered rate divided by the frames each step returns.
+- **Explicit frame ownership.** Frames live in a ring the application owns, allocated once at the maximum size. A slot is filled on the application's CUDA stream and handed to ovstream with that slot's event as the sync hint; the ring is deep enough that a slot is not rewritten while a transport may still read it.
+- **One swizzle, after the composite.** Renderer output is RGBA8, ovui's export is RGBA8, ovstream ingests BGRA8: a single kernel converts the finished frame. When ovrtx alone feeds the stream, its SPG `Swizzle` node can emit BGRA8 directly, but that output disables frame generation, so the reference implementation keeps the conversion in the application.
+- **Control channel before `start()`.** Text, resize, cursor and application-message callbacks are registered before the server starts, and every callback hands off to the main thread through a queue so scene writes happen on the loop thread only.
+- **Shutdown order.** Servers stop first, then in-flight render work is finished, then the application's CUDA resources are freed, then the UI and renderer are destroyed, then `ovstream.shutdown()`.
+- **One runtime per process.** ovrtx and ovstream bundle the same GStreamer, GLib and CUDA runtime builds and share them once loaded together; the versions per release, and the one-initialisation rule for GStreamer, are under "One GStreamer and one CUDA runtime per process" in Common gotchas.
 
 ## Distribution
 
@@ -505,10 +614,6 @@ test sources themselves are not part of the distributed package.
 
 ## What's not in scope (currently)
 
-- Client-driven stream resize (the server streams at whatever
-  resolution was passed to `ovstream_start`; client-requested
-  viewport changes are ignored).
-- Clipboard sync.
 - Pre-encoded AV1 for RTSP (WebRTC/native only).
 - Audio codecs other than PCM16.
 - Raw-CUDA input through a custom RTSP pipeline.
@@ -1214,3 +1319,33 @@ loop) are undefined behavior. Allocation failure inside
 These choices keep the surface tiny and the implementation honest.
 Adding any of these would push the library into a different design
 space; the goal is a smaller library that does one thing well.
+
+---
+
+## Application messaging (`ovstream_utils.messaging`)
+
+The second utility in the package, and the first that is Python only.
+ovstream's core treats application payloads as opaque strings
+(`ovstream_send_app_message` / the app-message callback wrap and
+unwrap the browser client's envelope and stop there). The convention
+the stock browser client speaks *inside* that string -- a JSON object
+with `event_type`, a correlation `id`, and `payload`, split into
+`part` / `numParts` messages when it does not fit one transport
+message -- is an application schema, not transport, so it lives here
+rather than in the core:
+
+- the core's C ABI stays envelope-agnostic, keeping native and bespoke
+  clients first-class and leaving this convention free to evolve
+  without an ABI change;
+- the work is pure JSON string manipulation with no native component,
+  so there is no `.h` / `.hpp` surface and no shared library; the
+  three-surfaces pattern above does not apply.
+
+`AppMessenger(server)` installs itself as the server's app-message
+callback and owns both directions: `send(event_type, payload)`
+serialises, budgets parts by wire size after both JSON escaping
+passes, and sends them contiguously; inbound parts are buffered per
+`id` in any arrival order and dispatched once to the handler
+registered with `on(event_type, handler)`. Malformed traffic is logged
+and dropped; nothing raises on the callback thread. See the
+`app-messaging` skill for usage.

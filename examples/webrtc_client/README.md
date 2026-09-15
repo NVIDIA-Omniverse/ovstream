@@ -12,10 +12,24 @@ A drop-in HTML/JS client for the ovstream WebRTC transport. No build step, no np
 ## What's bundled
 
 - `index.html` — the client UI and signaling-handshake glue.
-- `omniverse-webrtc-streaming-library.js` — vendored copy of the streaming client library that speaks the StreamSDK signaling flavor.
+- `ov-web-rtc.umd.cjs` — the UMD build of `@nvidia/ov-web-rtc` 6.7.1, vendored unmodified from the npm package (`dist/ov-web-rtc.umd.cjs`). It speaks the StreamSDK signaling flavor and exposes the library as `window.OVWebRTC`.
 
 Off-the-shelf WebRTC tooling like `webrtc-cli` or a raw browser `RTCPeerConnection` will **not** interoperate with ovstream's WebRTC server — the client has to speak the StreamSDK signaling flavor that this library implements.
 
+With this library version the client also applies cursor changes sent by the server (`set_cursor`) to the video element, reassembles multi-part application messages before delivering them to `onCustomEvent`, and splits large outbound application messages into parts (see the `app-messaging` skill).
+
+### Updating the bundled library
+
+```bash
+npm pack @nvidia/ov-web-rtc@<version> --registry https://artifactory.nvidia.com/artifactory/api/npm/sw-pandora-npm-local/
+tar xzf nvidia-ov-web-rtc-<version>.tgz
+cp package/dist/ov-web-rtc.umd.cjs .
+```
+
+No patching is needed; update the version above and in `index.html` if the API used there changed.
+
 ## Resolution
 
-The stream resolution is whatever was passed to `ovstream_start` on the server side (1920×1080 for the bundled examples). Client-driven resize is not currently supported.
+The stream starts at whatever resolution was passed to `ovstream_start` on the server side (1920×1080 for the bundled examples).
+
+**Fit to window** asks the server to re-render at the size of the visible stream area, and keeps doing so as the browser window resizes. The request is honored only when the server was started with `webrtc.resizable` and handles the resize-request callback — the config handshake reports this as `allow_dynamic_resize`. Otherwise the server logs a warning and drops the request, and the stream stays at its starting resolution. Of the bundled examples, `starfield_stream` and `warp_stream` support it.

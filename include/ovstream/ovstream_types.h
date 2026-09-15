@@ -21,8 +21,8 @@
 // header/library skew.
 //--------------------------------------------------------------
 #define OVSTREAM_VERSION_MAJOR 0
-#define OVSTREAM_VERSION_MINOR 4
-#define OVSTREAM_VERSION_PATCH 5
+#define OVSTREAM_VERSION_MINOR 5
+#define OVSTREAM_VERSION_PATCH 0
 
 //--------------------------------------------------------------
 // @brief Mark a public entry point, type, or field as deprecated.
@@ -533,6 +533,106 @@ typedef void (*ovstream_unicode_callback_t)(ovstream_server_t* server,
                                             void* user_data);
 
 //--------------------------------------------------------------
+// @brief Client app-message callback signature.
+//
+// Registered via `ovstream_set_app_message_callback`. Delivered
+// when a client sends a JSON message envelope addressed to the
+// application (`messageRecipient` of `"app"`, or its pre-handshake
+// alias `"kit"`); the payload is the envelope's inner `data`
+// string, unwrapped.
+//
+// @param server    The server that produced the event.
+// @param payload   Inner message payload. Output-string contract:
+//                  `payload.ptr` is non-NULL and null-terminated,
+//                  `payload.length` excludes the terminator. Valid
+//                  only for the duration of the callback.
+// @param user_data Opaque pointer from `ovstream_set_app_message_callback`.
+//--------------------------------------------------------------
+typedef void (*ovstream_app_message_callback_t)(ovstream_server_t* server,
+                                                ovstream_string_t payload,
+                                                void* user_data);
+
+//--------------------------------------------------------------
+// @brief Client resize-request callback signature.
+//
+// Registered via `ovstream_set_resize_request_callback`. Delivered
+// when a client requests new stream dimensions via the stream
+// resize message. The requested dimensions arrive validated:
+// clamped to the stream's maximum (`config.width` / `height`) and
+// adjusted to the streaming alignment rules. The SDK never resizes
+// on its own -- the application re-renders at the requested size
+// and per-frame dimensions apply it.
+//
+// @param server    The server that produced the event.
+// @param width     Requested stream width in pixels (validated).
+// @param height    Requested stream height in pixels (validated).
+// @param user_data Opaque pointer from `ovstream_set_resize_request_callback`.
+//--------------------------------------------------------------
+typedef void (*ovstream_resize_request_callback_t)(ovstream_server_t* server,
+                                                   uint32_t width,
+                                                   uint32_t height,
+                                                   void* user_data);
+
+//--------------------------------------------------------------
+// @brief Client clipboard callback signature.
+//
+// Registered via `ovstream_set_clipboard_callback`. Delivered when
+// a client syncs its clipboard via the stream clipboard message;
+// chunked transfers are reassembled and delivered once complete.
+//
+// @param server    The server that produced the event.
+// @param text      UTF-8 clipboard contents. Output-string
+//                  contract: `text.ptr` is non-NULL and
+//                  null-terminated, `text.length` excludes the
+//                  terminator. Valid only for the duration of the
+//                  callback; copy out if it needs to outlive it.
+// @param user_data Opaque pointer from `ovstream_set_clipboard_callback`.
+//--------------------------------------------------------------
+typedef void (*ovstream_clipboard_callback_t)(ovstream_server_t* server,
+                                              ovstream_string_t text,
+                                              void* user_data);
+
+//--------------------------------------------------------------
+// @brief Streaming quality-of-service status snapshot.
+//
+// Delivered via `ovstream_set_qos_callback` whenever the streaming
+// backend publishes updated network feedback. The recommended
+// fields are the backend's suggestion for the streaming resolution
+// and frame rate given measured network conditions; the SDK never
+// acts on them. An application streaming with `webrtc.resizable`
+// can re-render at the recommended size and let per-frame
+// dimensions apply it.
+//
+// Fields may be appended in later versions; the struct is only
+// ever passed from the SDK to the application by pointer.
+//--------------------------------------------------------------
+typedef struct
+{
+    uint32_t recommended_width;  // Suggested stream width in pixels.
+    uint32_t recommended_height; // Suggested stream height in pixels.
+    uint32_t recommended_fps;    // Suggested streaming frame rate.
+    uint32_t average_rtd_ms;     // Average round-trip delay in milliseconds.
+    uint32_t average_bitrate;    // Average video bitrate in bits per second.
+    uint32_t maximum_bitrate;    // Maximum video bitrate in bits per second.
+    uint32_t fec_percent;        // Forward-error-correction repair percentage.
+} ovstream_qos_status_t;
+
+//--------------------------------------------------------------
+// @brief Streaming QoS status callback signature.
+//
+// Registered via `ovstream_set_qos_callback`.
+//
+// @param server    The server that produced the update.
+// @param status    Non-NULL status snapshot. Valid only for the
+//                  duration of the callback; copy out any fields
+//                  that need to outlive it.
+// @param user_data Opaque pointer from `ovstream_set_qos_callback`.
+//--------------------------------------------------------------
+typedef void (*ovstream_qos_callback_t)(ovstream_server_t* server,
+                                        const ovstream_qos_status_t* status,
+                                        void* user_data);
+
+//--------------------------------------------------------------
 // @brief A single ICE server entry for WebRTC NAT traversal.
 //
 // Unified STUN/TURN shape modelled on WebRTC's `RTCIceServer`:
@@ -698,6 +798,8 @@ typedef struct
     struct
     {
         uint16_t          signal_port; // Signaling TCP port (0 = default 49100).
+        bool              resizable;   // Per-frame resolution changes allowed when true.
+                                       // width/height become the maximum; raw CUDA only.
         ovstream_string_t public_ip;   // Fixed public IP (disables ICE when non-empty).
                                        // Input-string contract; empty view = ICE enabled.
     } webrtc;
@@ -844,15 +946,26 @@ typedef struct
 //       `cudaStreamSynchronize` before returning.
 //     - WebRTC / native push through StreamSDK which copies into its
 //       internal encoder ring before `nvstPushStreamData` returns.
+//       EXCEPTION: with `webrtc.resizable` set, StreamSDK's frame
+//       copying is disabled and the buffer may be read after the
+//       call returns. Stream from a persistent allocation sized for
+//       the maximum resolution -- render each frame into it and
+//       submit the actual dimensions; per-frame buffer reallocation
+//       is not supported while streaming. The allocation must come
+//       from cudaMalloc / cudaMallocPitch: the encoder registers the
+//       buffer directly and cannot register memory from a CUDA memory
+//       pool (cudaMallocAsync), so such frames are rejected with an
+//       error.
 //     - RTSP raw-CUDA copies the source into a server-owned device
 //       slot on a dedicated CUDA stream and synchronizes; RTSP
 //       pre-encoded copies the bitstream bytes into a freshly
 //       allocated GstBuffer.
-//   As a consequence the caller may freely reuse or free `buffer`
-//   (and any backing CUDA allocation, host allocation, or DLTensor
-//   `data` pointer) immediately after `ovstream_stream_video`
-//   returns. The `DLTensor` struct itself for TENSOR input only
-//   needs to outlive the call. Stack buffers are legal too.
+//   Outside the resizable exception above, the caller may freely
+//   reuse or free `buffer` (and any backing CUDA allocation, host
+//   allocation, or DLTensor `data` pointer) immediately after
+//   `ovstream_stream_video` returns. The `DLTensor` struct itself
+//   for TENSOR input only needs to outlive the call. Stack buffers
+//   are legal too.
 //--------------------------------------------------------------
 typedef struct
 {
@@ -911,6 +1024,9 @@ static_assert(sizeof(ovstream_log_level_t)   == sizeof(int), "OVSTREAM enum size
 static_assert(sizeof(ovstream_video_input_t) == sizeof(int), "OVSTREAM enum size mismatch.");
 static_assert(sizeof(ovstream_api_status_t)  == sizeof(int), "OVSTREAM enum size mismatch.");
 static_assert(sizeof(ovstream_result_t)      == sizeof(int), "OVSTREAM result_t ABI mismatch.");
+static_assert(sizeof(ovstream_server_config_t)                     == 136, "OVSTREAM server config ABI mismatch.");
+static_assert(offsetof(ovstream_server_config_t, webrtc.public_ip) ==  40, "OVSTREAM server config ABI mismatch.");
+static_assert(offsetof(ovstream_server_config_t, rtsp)             ==  56, "OVSTREAM server config ABI mismatch.");
 #endif
 
 #ifdef __cplusplus
