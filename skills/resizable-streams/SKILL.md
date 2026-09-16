@@ -9,6 +9,8 @@ description: Client-driven resize on WebRTC/native streams end to end — enabli
 
 A WebRTC/native server started with `webrtc_resizable=True` treats `width` / `height` as the maximum and takes the current resolution from each frame's dimensions. The SDK never resizes on its own: it delivers the client's validated request through `on_resize_request` and the application re-renders at the new size. SHM and CUDASHM behave this way always; RTSP never does. See the `stream-messages` skill for the message flow and the `streaming-frames` skill for the frame contract.
 
+`webrtc_fit_client=True` delivers the resolution each connecting client requests through the same `on_resize_request` callback, so the first frame already matches it. On a non-resizable stream it instead becomes the fixed resolution, and the buffer rules below do not apply.
+
 ## Buffer rules
 
 With frame copying disabled the encoder registers the application's buffer directly, which imposes two rules:

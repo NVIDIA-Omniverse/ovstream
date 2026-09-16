@@ -22,7 +22,7 @@
 //--------------------------------------------------------------
 #define OVSTREAM_VERSION_MAJOR 0
 #define OVSTREAM_VERSION_MINOR 5
-#define OVSTREAM_VERSION_PATCH 0
+#define OVSTREAM_VERSION_PATCH 1
 
 //--------------------------------------------------------------
 // @brief Mark a public entry point, type, or field as deprecated.
@@ -557,15 +557,17 @@ typedef void (*ovstream_app_message_callback_t)(ovstream_server_t* server,
 //
 // Registered via `ovstream_set_resize_request_callback`. Delivered
 // when a client requests new stream dimensions via the stream
-// resize message. The requested dimensions arrive validated:
-// clamped to the stream's maximum (`config.width` / `height`) and
-// adjusted to the streaming alignment rules. The SDK never resizes
-// on its own -- the application re-renders at the requested size
-// and per-frame dimensions apply it.
+// resize message (`webrtc.resizable`), or once per connecting
+// client with its requested resolution (`webrtc.fit_client`). Dimensions
+// arrive adjusted to the streaming alignment rules and clamped to the
+// stream's maximum (`config.width` / `height`); on a non-resizable
+// `fit_client` stream they are instead clamped to the supported range
+// and replace the configured extents. The application re-renders at
+// the reported size.
 //
 // @param server    The server that produced the event.
-// @param width     Requested stream width in pixels (validated).
-// @param height    Requested stream height in pixels (validated).
+// @param width     Stream width in pixels (validated).
+// @param height    Stream height in pixels (validated).
 // @param user_data Opaque pointer from `ovstream_set_resize_request_callback`.
 //--------------------------------------------------------------
 typedef void (*ovstream_resize_request_callback_t)(ovstream_server_t* server,
@@ -591,6 +593,40 @@ typedef void (*ovstream_resize_request_callback_t)(ovstream_server_t* server,
 typedef void (*ovstream_clipboard_callback_t)(ovstream_server_t* server,
                                               ovstream_string_t text,
                                               void* user_data);
+
+//--------------------------------------------------------------
+// @brief One HTTP header received with a client's signaling request.
+//
+// Both fields follow the output-string contract. Names arrive as
+// the client sent them; HTTP header names are case-insensitive.
+//--------------------------------------------------------------
+typedef struct
+{
+    ovstream_string_t name;  // Header name.
+    ovstream_string_t value; // Header value.
+} ovstream_signaling_header_t;
+
+//--------------------------------------------------------------
+// @brief Signaling-headers callback signature.
+//
+// Registered via `ovstream_set_signaling_headers_callback`. Delivered
+// when a client's signaling connection request arrives, before the
+// session is established.
+//
+// @param server       The server that received the request.
+// @param headers      `header_count` headers, or NULL when the client
+//                     sent none. Valid only for the duration of the
+//                     callback.
+// @param header_count Number of entries in `headers`.
+// @param user_data    Opaque pointer from `ovstream_set_signaling_headers_callback`.
+//
+// @return true to accept the connection, false to reject it with a
+//         forbidden response.
+//--------------------------------------------------------------
+typedef bool (*ovstream_signaling_headers_callback_t)(ovstream_server_t* server,
+                                                      const ovstream_signaling_header_t* headers,
+                                                      uint32_t header_count,
+                                                      void* user_data);
 
 //--------------------------------------------------------------
 // @brief Streaming quality-of-service status snapshot.
@@ -797,11 +833,15 @@ typedef struct
     // WebRTC/native-specific (ignored for RTSP, SHM, and CUDASHM).
     struct
     {
-        uint16_t          signal_port; // Signaling TCP port (0 = default 49100).
-        bool              resizable;   // Per-frame resolution changes allowed when true.
-                                       // width/height become the maximum; raw CUDA only.
-        ovstream_string_t public_ip;   // Fixed public IP (disables ICE when non-empty).
-                                       // Input-string contract; empty view = ICE enabled.
+        uint16_t          signal_port;   // Signaling TCP port (0 = default 49100).
+        bool              resizable;     // Per-frame resolution changes allowed when true.
+                                         // width/height become the maximum; raw CUDA only.
+        bool              fit_client;    // Adopt requested resolution on client connection
+                                         // and report it via the "resize request" callback.
+        bool              audio_capture; // Automatically capture and stream ALL host audio.
+                                         // `ovstream_stream_audio` returns NOT_SUPPORTED.
+        ovstream_string_t public_ip;     // Fixed public IP (disables ICE when non-empty).
+                                         // Input-string contract; empty view = ICE enabled.
     } webrtc;
 
     // RTSP-specific (ignored for WebRTC/native, SHM, and CUDASHM).

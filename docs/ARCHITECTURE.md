@@ -286,6 +286,17 @@ definition.
 - StreamSDK's ERROR level is conservative — many things it reports
   as errors are recoverable conditions, so the SDK remaps them to
   WARN before delivering to the user's log callback.
+- Connection acceptance is the application's call: a client's
+  signaling headers are delivered to
+  `ovstream_set_signaling_headers_callback` (C) /
+  `Server.on_signaling_headers` (Python) before the session is
+  established, and returning false rejects the connection. The SDK
+  never inspects header values itself. With no callback registered
+  every connection is accepted.
+- `webrtc.audio_capture` hands the audio stream to StreamSDK's
+  capture module, which streams all host audio output;
+  `ovstream_stream_audio` then returns `NOT_SUPPORTED`. Falls back to
+  pushed audio if the module cannot be created.
 - STUN / TURN credentials are supplied via
   `ovstream_webrtc_set_ice_servers` (C) /
   `Server.set_webrtc_ice_servers` (Python). Replace-all semantics;
@@ -520,6 +531,13 @@ delivers the client's validated request, the application re-renders,
 and per-frame dimensions do the rest — the SDK never resizes on its
 own.
 
+`webrtc.fit_client` delivers the resolution each connecting client
+requests (aligned) through the same resize-request callback. On a
+resizable stream that is an ordinary request, clamped to the maximum;
+a non-resizable stream adopts it in place of `width` x `height`
+(clamped to the supported range), so frames must match it from then
+on. Applies to raw CUDA and pre-encoded input alike.
+
 ## Common gotchas
 
 The things that bite production integrations more often than the rest of this document. The full contracts live in `ovstream_types.h` / `ovstream.h` and the per-skill files under `skills/`; this section is the consolidated reading order for someone integrating ovstream for the first time.
@@ -543,7 +561,7 @@ Pitch is the second alignment surface. For raw CUDA, `pitch_bytes` should be at 
 
 ### Register callbacks BEFORE `ovstream_start`
 
-`ovstream_set_connection_callback`, `_message_callback`, `_input_callback`, and `_unicode_callback` can be called at any time, but they only deliver **future** transitions. Registering after `ovstream_start` returns means an in-flight first-connect or first-message event can fire before the callback is set and be lost — the SDK does not replay the initial state on registration.
+`ovstream_set_connection_callback`, `_message_callback`, `_input_callback`, and `_unicode_callback` can be called at any time, but they only deliver **future** transitions. Registering after `ovstream_start` returns means an in-flight first-connect or first-message event can fire before the callback is set and be lost — the SDK does not replay the initial state on registration. The same holds for the signaling-headers callback and for the resize-request callback on a `fit_client` stream, both of which fire during the client's connection handshake.
 
 Safe patterns:
 

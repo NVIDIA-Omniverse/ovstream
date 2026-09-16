@@ -64,6 +64,8 @@ ovstream_set_resize_request_callback(server, onResizeRequest, nullptr);
 >
 > **Source:** `examples/python/app_stream/app_stream/app.py` snippet `apply-resize` shows the debounced, clamped resize applied to a renderer at runtime; see the `resizable-streams` skill.
 
+With `webrtc_fit_client=True` the same callback also fires once per connecting client with its requested resolution (see the `server-creation` skill); no resize message is involved.
+
 ## Clipboard sync
 
 Both directions, chunked automatically to fit the 64 KB per-message transport limit:

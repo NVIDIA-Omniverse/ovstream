@@ -49,7 +49,8 @@ extern "C"
 // @defgroup callbacks Callbacks
 // Register asynchronous notifications fired from server-internal
 // threads back to the caller: connect / disconnect, client message,
-// input event, unicode text.
+// input event, unicode text, stream control messages, signaling
+// headers, QoS.
 //--------------------------------------------------------------
 
 //--------------------------------------------------------------
@@ -304,7 +305,9 @@ OVSTREAM_API ovstream_result_t ovstream_stream_video(ovstream_server_t* server,
 // `bits_per_sample != 16` are rejected. Same buffer lifetime
 // contract as `ovstream_stream_video`: samples are staged into
 // server-owned memory before the call returns, so the caller may
-// reuse or free `frame.buffer` immediately after return.
+// reuse or free `frame.buffer` immediately after return. A server
+// started with `webrtc.audio_capture` streams the host's audio
+// output itself and rejects pushed frames with NOT_SUPPORTED.
 //
 // @par Thread-Safety
 // Same contract as `ovstream_stream_video`.
@@ -321,7 +324,8 @@ OVSTREAM_API ovstream_result_t ovstream_stream_video(ovstream_server_t* server,
 //   - `OVSTREAM_API_TIMEOUT` if the WebRTC audio stream is not yet
 //     connected and doesn't connect within the internal wait window
 //     (~200 ms); the frame is dropped.
-//   - `OVSTREAM_API_NOT_SUPPORTED` on RTSP and SHM servers.
+//   - `OVSTREAM_API_NOT_SUPPORTED` on RTSP and SHM servers, and on
+//     WebRTC/native servers started with `webrtc.audio_capture`.
 //   - `OVSTREAM_API_ERROR` if the StreamSDK submit fails.
 //
 // @ingroup streaming
@@ -587,13 +591,19 @@ OVSTREAM_API ovstream_result_t ovstream_set_app_message_callback(ovstream_server
 // reports resize availability to the client as "resizable AND
 // callback registered", so register before `ovstream_start` or a
 // client that handshakes early is told resize is unavailable.
+//
+// With `webrtc.fit_client` the same callback also delivers the
+// resolution each connecting client requests; a non-resizable stream
+// adopts it in place of `config.width` / `height`, so frames must
+// match it from then on.
+//
 // Registration succeeds on other backends but the callback never
 // fires there. See `ovstream_set_connection_callback` for
 // thread-safety and registration semantics.
 //
 // @param server    The server handle.
 // @param callback  Callback to invoke for each client resize
-//                  request, or NULL to clear.
+//                  request or adopted resolution, or NULL to clear.
 // @param user_data Opaque pointer passed back to every invocation.
 //
 // @return
@@ -632,6 +642,32 @@ OVSTREAM_API ovstream_result_t ovstream_set_resize_request_callback(ovstream_ser
 OVSTREAM_API ovstream_result_t ovstream_set_clipboard_callback(ovstream_server_t* server,
                                                                ovstream_clipboard_callback_t callback,
                                                                void* user_data);
+
+//--------------------------------------------------------------
+// @brief Register (or clear) the signaling-headers callback.
+//
+// Fires on WebRTC and native servers with the HTTP headers a client
+// sent with its signaling connection request; the return value
+// accepts or rejects the connection. The SDK never inspects header
+// values itself. With no callback registered every connection is
+// accepted. Registration succeeds on other backends but the callback
+// never fires there. See `ovstream_set_connection_callback` for
+// thread-safety and registration semantics.
+//
+// @param server    The server handle.
+// @param callback  Callback to invoke for each signaling request,
+//                  or NULL to clear.
+// @param user_data Opaque pointer passed back to every invocation.
+//
+// @return
+//   - `OVSTREAM_API_SUCCESS` on success.
+//   - `OVSTREAM_API_INVALID_ARGUMENT` if `server` is NULL.
+//
+// @ingroup callbacks
+//--------------------------------------------------------------
+OVSTREAM_API ovstream_result_t ovstream_set_signaling_headers_callback(ovstream_server_t* server,
+                                                                       ovstream_signaling_headers_callback_t callback,
+                                                                       void* user_data);
 
 //--------------------------------------------------------------
 // @brief Register (or clear) the streaming QoS status callback.
