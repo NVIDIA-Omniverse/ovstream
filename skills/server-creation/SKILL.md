@@ -105,6 +105,8 @@ ovstream_webrtc_ice_config_t cfg = { entries, 2 };
 ovstream_webrtc_set_ice_servers(server, &cfg);
 ```
 
+`cfg.transport_policy` (Python: the `transport_policy` argument) selects direct-first, relay-only, or direct-only paths; each entry's `turn_type` names the relay operator. When client media arrives through a fixed public endpoint, report it as `cfg.remote_address` / `cfg.remote_port` (Python: `remote_candidate=(address, port)`).
+
 Key points:
 - **Call before OR after `start`.** Pre-start calls are cached and applied when the server starts; post-start calls take effect immediately via StreamSDK's runtime-parameter API. The post-start path is the canonical way to **refresh time-limited TURN tokens** without dropping connected clients.
 - **Replace-all semantics.** Each call fully replaces the prior set. Pass `None` (Python) / `NULL` (C) to clear.

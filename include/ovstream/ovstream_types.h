@@ -22,7 +22,7 @@
 //--------------------------------------------------------------
 #define OVSTREAM_VERSION_MAJOR 0
 #define OVSTREAM_VERSION_MINOR 5
-#define OVSTREAM_VERSION_PATCH 1
+#define OVSTREAM_VERSION_PATCH 2
 
 //--------------------------------------------------------------
 // @brief Mark a public entry point, type, or field as deprecated.
@@ -271,13 +271,24 @@ typedef enum
 } ovstream_mouse_button_t;
 
 //--------------------------------------------------------------
+// @brief Bits of the `modifiers` field carried by keyboard, mouse,
+// and high-level touch events. A zero mask means no modifier is held.
+//--------------------------------------------------------------
+#define OVSTREAM_MODIFIER_SHIFT     0x0001u
+#define OVSTREAM_MODIFIER_CONTROL   0x0002u
+#define OVSTREAM_MODIFIER_ALT       0x0004u
+#define OVSTREAM_MODIFIER_SUPER     0x0008u
+#define OVSTREAM_MODIFIER_CAPS_LOCK 0x0010u
+#define OVSTREAM_MODIFIER_NUM_LOCK  0x0020u
+
+//--------------------------------------------------------------
 // @brief A keyboard key press or release reported by the client.
 //--------------------------------------------------------------
 typedef struct
 {
     uint16_t                key_code;     // Platform key code from the client.
     uint16_t                scan_code;    // Raw hardware scan code.
-    uint16_t                modifiers;    // Bitmask of held modifiers (Shift/Ctrl/Alt/Meta).
+    uint16_t                modifiers;    // Bitmask of OVSTREAM_MODIFIER_* bits.
     ovstream_key_state_t    key_state;    // Up (release) or Down (press).
     uint64_t                timestamp_us; // Client-side capture timestamp in us (0 if unavailable).
 } ovstream_keyboard_event_t;
@@ -300,7 +311,7 @@ typedef struct
 typedef struct
 {
     ovstream_mouse_event_type_t type;         // Selects MOVE / WHEEL / BUTTON interpretation.
-    uint16_t                    modifiers;    // Bitmask of held keyboard modifiers.
+    uint16_t                    modifiers;    // Bitmask of OVSTREAM_MODIFIER_* bits.
     int32_t                     x;            // See type-dispatch table above.
     int32_t                     y;            // See type-dispatch table above.
     int32_t                     data;         // See type-dispatch table above.
@@ -427,7 +438,7 @@ typedef struct
 {
     uint8_t  point_count;   // Valid entries in `points` (<= OVSTREAM_MAX_TOUCH_POINTS).
     uint8_t  low_level;     // 1 = low-level flavor, 0 = high-level.
-    uint16_t modifiers;     // Held keyboard modifiers (high-level only; 0 otherwise).
+    uint16_t modifiers;     // OVSTREAM_MODIFIER_* bits (high-level only; 0 otherwise).
     uint16_t source_width;  // Pixel width the coords were normalized against (high-level only; 0 otherwise).
     uint16_t source_height; // Pixel height the coords were normalized against (high-level only; 0 otherwise).
     uint64_t timestamp_us;  // Event capture time in us (high-level only; 0 otherwise).
@@ -669,6 +680,25 @@ typedef void (*ovstream_qos_callback_t)(ovstream_server_t* server,
                                         void* user_data);
 
 //--------------------------------------------------------------
+// @brief Operator of a TURN server, which selects StreamSDK's relay handling.
+//--------------------------------------------------------------
+typedef enum
+{
+    OVSTREAM_WEBRTC_TURN_CSP = 0, // Cloud service provider relay (default).
+    OVSTREAM_WEBRTC_TURN_GFN = 1, // GeForce NOW relay.
+} ovstream_webrtc_turn_type_t;
+
+//--------------------------------------------------------------
+// @brief Which ICE candidate paths a connection may use.
+//--------------------------------------------------------------
+typedef enum
+{
+    OVSTREAM_WEBRTC_TRANSPORT_ALL    = 0, // Direct paths first, TURN relay as fallback (default).
+    OVSTREAM_WEBRTC_TRANSPORT_RELAY  = 1, // TURN relay only.
+    OVSTREAM_WEBRTC_TRANSPORT_DIRECT = 2, // Direct paths only; TURN entries are ignored.
+} ovstream_webrtc_transport_policy_t;
+
+//--------------------------------------------------------------
 // @brief A single ICE server entry for WebRTC NAT traversal.
 //
 // Unified STUN/TURN shape modelled on WebRTC's `RTCIceServer`:
@@ -691,6 +721,8 @@ typedef struct
     ovstream_string_t username;
     // TURN password / token, or empty for STUN-only entries.
     ovstream_string_t credential;
+    // Relay operator for the TURN URLs in this entry; ignored for STUN-only entries.
+    ovstream_webrtc_turn_type_t turn_type;
 } ovstream_webrtc_ice_server_t;
 
 //--------------------------------------------------------------
@@ -704,11 +736,22 @@ typedef struct
 // `server_count == 0` (or `config == NULL` to the setter) clears
 // the previously configured ICE servers. Otherwise `servers` must
 // be non-NULL and reference exactly `server_count` entries.
+//
+// `remote_address` / `remote_port` name the endpoint a client's
+// media is expected to arrive from when a deployment routes it
+// through a fixed public address, such as a shared port on a cloud
+// gateway; the server then negotiates through that endpoint without
+// waiting for ICE discovery. An empty `remote_address` names no
+// endpoint; one already reported to a running server stays in
+// effect.
 //--------------------------------------------------------------
 typedef struct
 {
-    const ovstream_webrtc_ice_server_t* servers;      // Array, may be NULL when server_count == 0.
-    uint32_t                            server_count; // 0 to clear all ICE servers.
+    const ovstream_webrtc_ice_server_t* servers;          // Array, may be NULL when server_count == 0.
+    uint32_t                            server_count;     // 0 to clear all ICE servers.
+    ovstream_webrtc_transport_policy_t  transport_policy; // Candidate paths a connection may use.
+    ovstream_string_t                   remote_address;   // IPv4 address the client's media arrives from, or empty.
+    uint16_t                            remote_port;      // Port the client's media arrives from; required with remote_address.
 } ovstream_webrtc_ice_config_t;
 
 //--------------------------------------------------------------
@@ -1067,6 +1110,8 @@ static_assert(sizeof(ovstream_result_t)      == sizeof(int), "OVSTREAM result_t 
 static_assert(sizeof(ovstream_server_config_t)                     == 136, "OVSTREAM server config ABI mismatch.");
 static_assert(offsetof(ovstream_server_config_t, webrtc.public_ip) ==  40, "OVSTREAM server config ABI mismatch.");
 static_assert(offsetof(ovstream_server_config_t, rtsp)             ==  56, "OVSTREAM server config ABI mismatch.");
+static_assert(sizeof(ovstream_webrtc_ice_server_t)                 ==  56, "OVSTREAM ICE server ABI mismatch.");
+static_assert(sizeof(ovstream_webrtc_ice_config_t)                 ==  40, "OVSTREAM ICE config ABI mismatch.");
 #endif
 
 #ifdef __cplusplus

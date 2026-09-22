@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-09-21
+### Added
+- WebRTC ICE Configuration: `transport_policy`, `remote_address` / `remote_port`, and per-server `turn_type`.
+- Input: `OVSTREAM_MODIFIER_*` (Python `KeyboardModifier`) to name bits of the input event `modifiers` field.
+
+### Changed
+- `ovstream_webrtc_ice_server_t` and `ovstream_webrtc_ice_config_t` struct sizes; all consumers must rebuild.
+
 ## [0.5.1] - 2026-09-15
 ### Added
 - WebRTC Features: `webrtc.audio_capture`, `webrtc.fit_client`, and `ovstream_set_signaling_headers_callback`.

@@ -245,6 +245,32 @@ notes lines you may additionally see that are not auto-asserted.
   TCP/TLS relays the media. The browser allocates the relay over TCP; the
   ICE-lite server forwards its TURN config to the browser.
 
+### server-forced-relay
+
+- **Topology:** Server configured with `transport_policy: RELAY` and a coturn
+  TURN server over UDP. The browser is **not** forced to relay (default
+  `iceTransportPolicy: "all"`), so a direct path exists and the relay has to
+  be selected by the server's policy alone. Exercised via the **browser lane**
+  (see the note above).
+- **Expected:** connect via a `relay` candidate; server logs `Client connected
+  to WebRTC server`.
+- **Diagnosis:** `transport_policy: RELAY` makes the server accept only relayed
+  candidate pairs, so media traverses the TURN server even when direct would
+  work — for deployments where policy, not topology, requires every stream to
+  go through the relay operator. If the browser ends up on a `host` or `srflx`
+  candidate instead, the policy was not in effect for that connection: it
+  is set together with the ICE servers, applies to connections made after
+  it is applied (before or after `start()`), and needs at least one `turn:`
+  entry to relay through.
+- **Fix:** Pass `transport_policy: RELAY` with a reachable `turn:` entry to
+  `set_webrtc_ice_servers` before the client connects. Without a TURN
+  server, `RELAY` leaves no usable candidate pair and the stream never
+  connects.
+- **Not exercised here:** the per-server `turn_type` (relay operator) and the
+  `remote_address` / `remote_port` fields of the ICE configuration are only
+  meaningful against the corresponding cloud infrastructure; the lab validates
+  their plumbing at the API level only.
+
 ### container-host-network
 
 - **Topology:** Server in a `--gpus all --net=host` container; the native probe

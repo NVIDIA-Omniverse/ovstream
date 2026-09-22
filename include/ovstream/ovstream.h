@@ -825,10 +825,12 @@ OVSTREAM_API ovstream_result_t ovstream_set_cursor(ovstream_server_t* server,
 // strings each have a per-byte length cap inherited from
 // StreamSDK (128 bytes for STUN, 170 bytes for TURN).
 //
-// The underlying ICE transport policy is fixed to "all" (try
-// direct paths first, fall back to TURN) -- matching the WebRTC
-// default. Force-relay is intentionally not exposed in this
-// release.
+// `config->transport_policy` selects which candidate paths a
+// connection may use; the default tries direct paths first and
+// falls back to TURN. Each entry's `turn_type` names the relay
+// operator for its TURN URLs. `config->remote_address` and
+// `config->remote_port` report the fixed endpoint a client's media
+// arrives from, when a deployment has one.
 //
 // @par Example
 // @code
@@ -860,7 +862,7 @@ OVSTREAM_API ovstream_result_t ovstream_set_cursor(ovstream_server_t* server,
 //     `server_count > 0` with `servers == NULL`, oversized
 //     URL/credential string, unknown URL scheme, empty `urls`
 //     view, more than 4 STUN / 8 TURN entries, more than 3 URLs
-//     per entry).
+//     per entry, a `remote_address` without a `remote_port`).
 //   - `OVSTREAM_API_NOT_SUPPORTED` on RTSP, SHM, and CUDASHM
 //     servers (those backends have no concept of ICE).
 //

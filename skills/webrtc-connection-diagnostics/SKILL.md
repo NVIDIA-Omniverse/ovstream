@@ -57,6 +57,7 @@ Find the line(s) you have in the table below (a condensed view of the doc's
 | (client) `Signaling handshake timedout` / StreamerNoOffer `0xC0F22219`, server silent | `wrong-port-signaling-timeout` | Client never reached the server → check signal-port reachability/firewall/port match. |
 | Connect succeeds, no media, behind NAT | `nat-full-cone-stun` / `nat-symmetric-no-turn` | Configure a reachable STUN server (`set_webrtc_ice_servers`). With one public peer, STUN/direct usually suffices even through symmetric NAT; TURN is needed only when *both* peers are NAT/firewall-constrained. |
 | Connect succeeds, no media, UDP blocked | `blocked-udp-no-turn` | Firewall drops UDP media → open the UDP media port or relay via TURN-over-TCP (`blocked-udp-turn-tcp`; the browser client relays through any standard TURN server). |
+| Server set `transport_policy=RELAY`, connect succeeds but no media, or media flows direct | `server-forced-relay` | RELAY needs a reachable `turn:` entry in the same `set_webrtc_ice_servers` call; without one there is no usable candidate pair. Set it before the client connects, since the policy only affects candidate selection for connections made after it is applied. |
 | Bridge container, signals but no media | `container-bridge-portmap` | UDP media port not published → publish it (`-p 47998:47998/udp`). |
 | (client) Ragnarok `0xC0F2220F` | `browser-client-decode` | Browser WebRTC policy (e.g. `WebRtcIPHandling=disable_non_proxied_udp`). |
 | `NV_ENC_ERR_UNSUPPORTED_DEVICE` / `0x800E840C` | `loopback-video-frame` | GPU/NVENC can't encode → check GPU, or `cuda_device` on multi-GPU hosts. |
@@ -115,3 +116,8 @@ cross-physical-machine, or IPv6/IPv4-stack-mismatch cases, follow the
   stack gathers no relay candidates, so the native `ovstream_webrtc_probe`
   cannot use TURN — but a browser client does standard TURN against any server
   (external ones included). Diagnose relay problems with the browser client.
+- **The server can force the relay too.** `transport_policy=RELAY` on the ICE
+  configuration rejects direct candidate pairs on the server side, so the
+  stream relays even when the browser is not forced (`server-forced-relay`).
+  `turn_type` and `remote_address` / `remote_port` are cloud-infrastructure
+  fields with no lab lane; check them against that infrastructure's docs.

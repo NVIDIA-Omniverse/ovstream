@@ -307,9 +307,12 @@ definition.
   entry's URLs are split on `,` and classified by scheme: `stun:` /
   `stuns:` route to StreamSDK's NAT-server table (up to 4 entries),
   `turn:` / `turns:` route to the TURN table (up to 8 entries),
-  with at most 3 URLs per entry. Transport policy is fixed to
-  "all" (try direct paths first, fall back to TURN) — matches the
-  WebRTC default. The setter returns `NOT_SUPPORTED` on RTSP / SHM /
+  with at most 3 URLs per entry. The config's `transport_policy`
+  selects direct-first (the default), relay-only, or direct-only
+  paths, and each entry's `turn_type` names the relay operator. A
+  deployment that routes client media through a fixed public
+  endpoint reports it in the same config as `remote_address` /
+  `remote_port`. The setter returns `NOT_SUPPORTED` on RTSP / SHM /
   CUDASHM backends, which have no ICE concept.
 
 ### SHM (shared memory) backend
