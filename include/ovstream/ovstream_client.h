@@ -74,7 +74,10 @@ extern "C"
 // @defgroup client Unified client
 // Consumer-side library for attaching to an ovstream producer and pulling
 // frames + control messages, across the SHM, CUDASHM, and native (StreamSDK)
-// transports.
+// transports. Clearing or replacing the message callback does not wait
+// for deliveries that already captured the previous one, so keep the
+// previous callback and its user_data valid until `ovstream_destroy_client`
+// returns, and destroy the client from outside its callbacks.
 //--------------------------------------------------------------
 
 //--------------------------------------------------------------

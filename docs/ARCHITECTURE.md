@@ -297,6 +297,8 @@ definition.
   capture module, which streams all host audio output;
   `ovstream_stream_audio` then returns `NOT_SUPPORTED`. Falls back to
   pushed audio if the module cannot be created.
+- `webrtc.event_tracing` enables StreamSDK event tracing (ETL) for
+  that server, for diagnostics. Off by default.
 - STUN / TURN credentials are supplied via
   `ovstream_webrtc_set_ice_servers` (C) /
   `Server.set_webrtc_ice_servers` (Python). Replace-all semantics;

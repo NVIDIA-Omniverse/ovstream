@@ -50,7 +50,11 @@ extern "C"
 // Register asynchronous notifications fired from server-internal
 // threads back to the caller: connect / disconnect, client message,
 // input event, unicode text, stream control messages, signaling
-// headers, QoS.
+// headers, QoS. Clearing or replacing a callback does not wait for
+// invocations that already captured the previous one, so keep the
+// previous callback and its user_data valid until
+// `ovstream_destroy_server` returns, and destroy the server from
+// outside its callbacks.
 //--------------------------------------------------------------
 
 //--------------------------------------------------------------

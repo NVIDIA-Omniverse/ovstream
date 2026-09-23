@@ -22,7 +22,7 @@
 //--------------------------------------------------------------
 #define OVSTREAM_VERSION_MAJOR 0
 #define OVSTREAM_VERSION_MINOR 5
-#define OVSTREAM_VERSION_PATCH 2
+#define OVSTREAM_VERSION_PATCH 3
 
 //--------------------------------------------------------------
 // @brief Mark a public entry point, type, or field as deprecated.
@@ -883,6 +883,7 @@ typedef struct
                                          // and report it via the "resize request" callback.
         bool              audio_capture; // Automatically capture and stream ALL host audio.
                                          // `ovstream_stream_audio` returns NOT_SUPPORTED.
+        bool              event_tracing; // StreamSDK event tracing (ETL) for diagnostics.
         ovstream_string_t public_ip;     // Fixed public IP (disables ICE when non-empty).
                                          // Input-string contract; empty view = ICE enabled.
     } webrtc;
