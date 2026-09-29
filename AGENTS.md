@@ -38,8 +38,8 @@ Edit these directly when needed; the mirror never touches them.
 
 ## Repo Layout
 
-- `examples/python/` — Python example projects (`basic_stream`, `local_stream`, `warp_stream`, `ovrtx_stream`).
-- `examples/c/` — C/C++ example projects (`basic_stream`, `starfield_stream`, `local_stream`, `pre_encoded_stream`).
+- `examples/python/` — Python example projects (`basic_stream`, `local_stream`, `warp_stream`, `ovrtx_stream`, `native_client`, `app_stream`).
+- `examples/c/` — C/C++ example projects (`basic_stream`, `starfield_stream`, `local_stream`, `pre_encoded_stream`, `native_client`).
 - `examples/webrtc_client/` — drop-in browser client for the WebRTC transport.
 - `skills/` — task-oriented agent skills (`*/SKILL.md`).
 
@@ -87,6 +87,12 @@ When a request maps to a known ovstream workflow, go directly to the relevant sk
 - Writing a CUDASHM (CUDA IPC) reader/consumer -> `skills/cudashm-consumers/SKILL.md`
 - Writing a native (StreamSDK) reader/consumer -> `skills/native-consumers/SKILL.md`
 - Diagnosing WebRTC/native connection failures -> `skills/webrtc-connection-diagnostics/SKILL.md`
+- Stream control messages (handshake, resize, clipboard, cursor, QoS) -> `skills/stream-messages/SKILL.md`
+- Application messages and `AppMessenger` -> `skills/app-messaging/SKILL.md`
+- Client-driven resize on WebRTC/native -> `skills/resizable-streams/SKILL.md`
+- Composing ovstream with ovrtx, ovstage and ovui -> `skills/composing-libraries/SKILL.md`
+- Streaming DLSS Frame Generation output -> `skills/frame-generation-streaming/SKILL.md`
+- Routing browser input to an ovui interface -> `skills/remote-input-to-ui/SKILL.md`
 
 If multiple skills seem relevant, start with `skills/application-flow/SKILL.md`, then layer in specialized skills.
 
