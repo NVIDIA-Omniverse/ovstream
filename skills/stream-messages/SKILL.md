@@ -1,6 +1,26 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: stream-messages
 description: Stream control messages on WebRTC/native — the config handshake, client-driven resize, clipboard sync, cursor forwarding, and exchanging app messages with the browser client. Use when user asks about client resize requests, clipboard, cursors, the config handshake, app messages, why on_message no longer sees certain JSON, or why a message sent with send_message never reaches the browser client.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - stream-control
+  - clipboard
+  - cursor
+  - webrtc
+tools:
+  - Read
+  - Grep
 ---
 
 # Stream Control Messages

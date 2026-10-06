@@ -1,6 +1,27 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: protocol-selection
 description: Choosing between WebRTC, RTSP, the native protocol, SHM, and CUDASHM. Use when user asks which transport to use, the trade-offs, what each protocol supports, or how to view a stream.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - webrtc
+  - rtsp
+  - native
+  - shm
+  - cudashm
+tools:
+  - Read
+  - Grep
 ---
 
 # Protocol Selection
@@ -35,7 +56,7 @@ If unsure, **start with WebRTC** — it has the broadest client compatibility (b
 | Stream control messages (handshake, client resize requests, clipboard, cursor) | ✓ | — | ✓ | — | — |
 | QoS hints (`on_qos`)             | ✓      | —    | ✓      | —   | —       |
 | Per-frame SEI metadata           | —      | ✓ (pre-encoded only) | —      | —   | —       |
-| Multiple simultaneous clients    | depends | ✓   | depends | ✓ (multi-reader) | ✓ (multi-reader) |
+| Multiple simultaneous clients    | — (one connection per server) | ✓   | — (one connection per server) | ✓ (multi-reader) | ✓ (multi-reader) |
 | Browser-viewable                 | ✓      | —    | —      | —   | —       |
 | Pixels delivered to consumer as  | encoded frames over network | encoded frames over network | encoded frames over network | host-mapped shared-memory bytes | CUDA device pointer (imported via `cudaIpcOpenMemHandle`) |
 | Cross-machine                    | ✓      | ✓    | ✓      | —   | —       |
@@ -44,7 +65,7 @@ If unsure, **start with WebRTC** — it has the broadest client compatibility (b
 ## How to view each
 
 - **WebRTC** — open [`examples/webrtc_client/index.html`](../../examples/webrtc_client/index.html), enter `host:signal_port`. Off-the-shelf WebRTC tooling (`webrtc-cli`, raw `RTCPeerConnection`) will **not** interoperate; the client must speak the StreamSDK signaling flavor that the bundled JS library implements.
-- **RTSP** — any RTSP client. Quick checks: `ffplay rtsp://localhost:8554/stream`, or VLC → "Open Network Stream".
+- **RTSP** — any RTSP client. Quick checks: `ffplay rtsp://localhost:8554/stream`, or VLC → "Open Network Stream". After the last client disconnects the shared pipeline is torn down (typically 100 to 250 ms); a DESCRIBE or PLAY arriving in that window is answered `503 Service Unavailable`, so retry (ffmpeg and PyAV do not by default).
 - **Native** — requires a native StreamSDK client; no browser equivalent. The bundled consumer is `ovstream.Client(ovstream.ClientType.NATIVE, server_ip=…)` (Python) or `ovstream_create_client(OVSTREAM_CLIENT_NATIVE, …)` (C); it connects over the network and decodes client-side via StreamSDK's NvStreamingMedia (which uses NVDEC on NVIDIA GPUs) into host BGRA8 frames, so the consumer needs its own NVIDIA GPU but can be on a different machine than the producer. The OpenCV viewer is `examples/python/native_client/main.py`; a headless C consumer is `examples/c/native_client/`. See `native-consumers` skill.
 - **SHM** — programmatic only. `ovstream.Client(ovstream.ClientType.SHM, stream_name=…)` (Python) or `ovstream_create_client(OVSTREAM_CLIENT_SHM, …)` (C). The bundled OpenCV viewer is `examples/python/local_stream/main_viewer.py`. See `shm-consumers` skill.
 - **CUDASHM** — programmatic only. `ovstream.Client(ovstream.ClientType.CUDASHM, stream_name=…)` (Python) or `ovstream_create_client(OVSTREAM_CLIENT_CUDASHM, …)` (C). The bundled OpenCV viewer is `examples/python/local_stream/main_cudashm_viewer.py` (it D2Hs each slot for screen display; real consumers do their work on the GPU directly). See `cudashm-consumers` skill.
@@ -87,5 +108,5 @@ Important CUDASHM caveats:
 - Don't expect input callbacks to fire on RTSP servers — RTSP has no input channel. Code that registers `on_input` on an RTSP server is fine (the registration succeeds) but the callback simply never fires.
 - WebRTC signaling and stream ports are separate; both must be open. RTSP uses one port (the stream port doubles as the control port).
 - SHM and CUDASHM stream names are case-sensitive and must match exactly between producer and reader. Pick something short and stable (e.g. `my-app-output`). The two backends use distinct OS-level path prefixes internally, so the same `stream_name` can be used for a parallel SHM + CUDASHM pair off the same producer with no collision.
-- Multiple WebRTC, native, or RTSP servers in one process require **explicit unique ports** — there is no auto-increment. A second WebRTC server that reuses the default `49100` will fail to start with an address-in-use error. Either assign distinct `webrtc_signal_port` / `stream_port` per server, or use SHM / CUDASHM (where names are the only differentiator and have no port conflict to worry about).
+- Multiple WebRTC, native, or RTSP servers in one process require **explicit unique ports** — there is no auto-increment. A second WebRTC or native server on an already-used signaling port fails to start with an error naming the port. Either assign distinct `webrtc_signal_port` / `stream_port` per server, or use SHM / CUDASHM (where names are the only differentiator and have no port conflict to worry about).
 - CUDASHM same-process attach fails (CUDA limitation). Running `main.py` + `main_cudashm_viewer.py` co-located in one Python script is not supported; launch the producer and the viewer in separate shells / processes.

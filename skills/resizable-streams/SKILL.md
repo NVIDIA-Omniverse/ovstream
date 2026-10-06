@@ -1,6 +1,25 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: resizable-streams
 description: Client-driven resize on WebRTC/native streams end to end — enabling webrtc_resizable, receiving resize requests, debouncing and clamping, re-rendering at the new size, and the buffer rules (persistent maximum-size allocation, no CUDA memory pools). Use when user asks how to honour browser resize requests, why a resizable stream never decodes, why frames must come from cudaMalloc, or how to change a renderer's resolution at runtime.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - resize
+  - webrtc
+  - native
+tools:
+  - Read
+  - Grep
 ---
 
 # Resizable Streams
@@ -28,7 +47,7 @@ With frame copying disabled the encoder registers the application's buffer direc
 
 ## Verify
 
-`tests/webrtc_net/browser/playwright_client.py --app-stream-check --resize WxH` connects a real Chrome, requests the size and checks the video element follows.
+`examples/webrtc_client/playwright_client.py --signal-port 49100 --app-stream-check --resize WxH` (needs `pip install playwright` and Google Chrome) connects a real Chrome, requests the size and checks the video element follows. Or connect the bundled `examples/webrtc_client` page by hand, enable Fit to window and confirm the decoded size follows the window.
 
 ## Common Pitfalls
 

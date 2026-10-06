@@ -55,6 +55,20 @@ OVSTREAM_ICE_SERVERS="stun:stun.l.google.com:19302" uv run main.py
 OVSTREAM_ICE_SERVERS="stun:stun.l.google.com:19302|turn:turn.example.net:3478,alice,secret" uv run main.py
 ```
 
+Windows PowerShell:
+
+```pwsh
+$env:OVSTREAM_ICE_SERVERS = "stun:stun.l.google.com:19302|turn:turn.example.net:3478,alice,secret"
+uv run main.py
+```
+
+Windows cmd (quote the whole assignment so `|` is not read as a pipe):
+
+```bat
+set "OVSTREAM_ICE_SERVERS=stun:stun.l.google.com:19302|turn:turn.example.net:3478,alice,secret"
+uv run main.py
+```
+
 The STUN URL above is Google's free public STUN server. It is widely used for development and testing, but Google provides it as an un-monitored service with no SLA, so commercial or mission-critical deployments should run their own dedicated STUN / TURN servers. There is also no good free public TURN service — TURN relays user bandwidth, so it's never free. For real-world testing run [coturn](https://github.com/coturn/coturn) locally:
 
 ```bash

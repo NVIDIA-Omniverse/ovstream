@@ -12,7 +12,7 @@
 # /// script
 # requires-python = ">=3.10,<3.14"
 # dependencies = [
-#     "ovstream>=0.5",
+#     "ovstream>=0.5.5",
 #     "ovrtx>=0.5,<0.7",
 #     "ovstage>=0.2",
 #     "numpy",
@@ -296,9 +296,11 @@ def main():
     ovstream.initialize()
     renderer = stage = camera = None
     try:
+        # The stage is created before the renderer and the renderer is then
+        # attached to it; the libraries must be initialized in this order.
+        stage = ovstage.Stage("ovstream.example.ovrtx_stream")
         print("Creating ovrtx renderer (first run compiles and caches shaders)...", file=sys.stderr)
         renderer = ovrtx.Renderer()
-        stage = ovstage.Stage("ovstream.example.ovrtx_stream")
         renderer.attach_ovstage(stage)
 
         print(f"Loading USD scene: {SCENE_PATH}", file=sys.stderr)
@@ -346,10 +348,11 @@ def main():
                                ovstream.ServerType.CUDASHM):
                 s.on_input = make_input_handler()
 
-            # ovrtx renders on GPU 0 in that device's primary CUDA context,
-            # so pinning the encoder to cuda_device=0 is enough here. A
-            # producer that renders in its own context must also pass
-            # cuda_context (see the warp_stream example).
+            # The RenderProduct in stream_scene.usda renders on CUDA-visible
+            # GPU 0 (deviceIds = [0]) and its mapped render var is readable
+            # from that device's primary context, so cuda_device=0 is enough
+            # here. A producer that renders in its own context must also
+            # pass cuda_context (see warp_stream).
             cfg = ovstream.ServerConfig(width=width, height=height, cuda_device=0)
             if server_type == ovstream.ServerType.RTSP:
                 if detail:
@@ -432,10 +435,7 @@ def main():
                             sync=ovstream.CudaSync(wait_event=int(mapping.wait_event or 0)),
                         )
                         for s in servers:
-                            try:
-                                s.stream_video(video_frame)
-                            except ovstream.OvstreamError:
-                                pass  # e.g. no client connected yet; drop silently
+                            s.stream_video(video_frame)
                         mapping.unmap()
                         del mapping
                     # [/snippet:compose-ovrtx]

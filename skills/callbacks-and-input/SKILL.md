@@ -1,6 +1,24 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: callbacks-and-input
 description: Wiring connection / message / input callbacks for WebRTC, native, SHM, and CUDASHM streams. Use when user asks about receiving input events, handling messages, detecting client connect/disconnect, or sending messages back.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - callbacks
+  - input
+tools:
+  - Read
+  - Grep
 ---
 
 # Callbacks and Input
@@ -18,7 +36,7 @@ WebRTC, native, SHM, and CUDASHM servers all have **reverse channels** that surf
 | `on_app_message` | The client sends an application-addressed message envelope (delivered unwrapped) | WebRTC, native |
 | `on_resize_request` | The client requests new stream dimensions (validated) | WebRTC, native |
 | `on_clipboard`  | The client syncs its clipboard (chunked transfers reassembled) | WebRTC, native |
-| `on_qos`        | The streaming backend publishes network feedback (recommended resolution / fps, RTT, bitrates) | WebRTC, native |
+| `on_qos`        | The streaming backend publishes network feedback (recommended resolution / fps, round-trip delay from client feedback, encoder target bitrates) | WebRTC, native |
 
 RTSP has no input or message channel — only the connection callback fires. SHM and CUDASHM both carry the reverse channel over a local control socket / named pipe (sibling to the pixel transport).
 
@@ -91,6 +109,7 @@ Input strings (the message you pass to `send_message`) are length-bounded and ne
 ## Common Pitfalls
 
 - **Callback after destroy.** Once you call `destroy_server` / `server.close()`, no further callbacks will fire — but a callback currently in flight from a network thread may still be running. The destroy call waits for it to drain.
+- **App messages before `on_connection`.** The first `on_app_message` can arrive several hundred milliseconds before `on_connection` reports the client connected; replying from the handler (`send_app_message`) is supported.
 - **Registering on RTSP is silent.** It succeeds (the API doesn't error), but `on_message` / `on_input` simply won't fire because RTSP has no inbound channel. WebRTC, native, SHM, and CUDASHM all deliver these callbacks normally.
 - **Callback and `user_data` lifetime.** Clearing or replacing a callback does not wait for invocations that already captured it, including ones not yet started. Keep the old callback function and `user_data` valid until server/client destruction returns, unless application synchronization guarantees all such invocations have completed.
 - **Gamepad events.** SHM and CUDASHM deliver gamepad events end-to-end (consumers send them via `Client.send_input_event` on a `ClientType.SHM` / `ClientType.CUDASHM` client). `ClientType.NATIVE` clients forward keyboard / mouse / unicode input the same way (via `send_input_event` / `send_unicode`), but **not gamepad**. On WebRTC / native the infrastructure exists on the server side but the StreamSDK clients do not currently forward gamepad input, so gamepad button presses in a browser or native client won't produce `on_input` callbacks today. Don't design around the WebRTC path without verifying it works for your specific client.

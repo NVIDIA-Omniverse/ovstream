@@ -42,12 +42,22 @@ skills/
 
 ## SKILL.md Format
 
-Each file is a YAML frontmatter block at byte 0, followed by a Markdown body. License attribution comes from the repo-root `LICENSE` file; individual skill files do not carry their own SPDX header so strict frontmatter parsers (Claude Code's skill auto-loader, the agent-readiness-skill-docs-alignment suite, etc.) that match `---` at byte 0 discover them correctly.
+Each file is a YAML frontmatter block at byte 0, followed by a Markdown body. The SPDX header sits inside the frontmatter as YAML comments, so strict frontmatter parsers (Claude Code's skill auto-loader, the agent-readiness-skill-docs-alignment suite, etc.) that match `---` at byte 0 still discover the skills, and every skill states its license, author, tags and the agent tools it expects.
 
 ```markdown
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 name: skill-name
 description: What this skill covers. Use when user asks to [trigger phrases].
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - topic
+tools:
+  - Read
+  - Grep
 ---
 
 # Skill Title

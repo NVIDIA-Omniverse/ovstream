@@ -22,7 +22,7 @@
 //--------------------------------------------------------------
 #define OVSTREAM_VERSION_MAJOR 0
 #define OVSTREAM_VERSION_MINOR 5
-#define OVSTREAM_VERSION_PATCH 4
+#define OVSTREAM_VERSION_PATCH 5
 
 //--------------------------------------------------------------
 // @brief Mark a public entry point, type, or field as deprecated.
@@ -573,8 +573,8 @@ typedef void (*ovstream_app_message_callback_t)(ovstream_server_t* server,
 // arrive adjusted to the streaming alignment rules and clamped to the
 // stream's maximum (`config.width` / `height`); on a non-resizable
 // `fit_client` stream they are instead clamped to the supported range
-// and replace the configured extents. The application re-renders at
-// the reported size.
+// (256 to 4096 pixels on each axis) and replace the configured
+// extents. The application re-renders at the reported size.
 //
 // @param server    The server that produced the event.
 // @param width     Stream width in pixels (validated).
@@ -631,8 +631,11 @@ typedef struct
 // @param header_count Number of entries in `headers`.
 // @param user_data    Opaque pointer from `ovstream_set_signaling_headers_callback`.
 //
-// @return true to accept the connection, false to reject it with a
-//         forbidden response.
+// @return true to accept the connection, false to reject it. A
+//         rejected client receives no offer and no HTTP error;
+//         StreamSDK closes its signaling socket when the heartbeat
+//         times out (about 20 s), and the bundled browser client
+//         reports `StreamerNoOffer`.
 //--------------------------------------------------------------
 typedef bool (*ovstream_signaling_headers_callback_t)(ovstream_server_t* server,
                                                       const ovstream_signaling_header_t* headers,
@@ -658,9 +661,10 @@ typedef struct
     uint32_t recommended_width;  // Suggested stream width in pixels.
     uint32_t recommended_height; // Suggested stream height in pixels.
     uint32_t recommended_fps;    // Suggested streaming frame rate.
-    uint32_t average_rtd_ms;     // Average round-trip delay in milliseconds.
-    uint32_t average_bitrate;    // Average video bitrate in bits per second.
-    uint32_t maximum_bitrate;    // Maximum video bitrate in bits per second.
+    uint32_t average_rtd_ms;     // Average round-trip delay in milliseconds from client feedback;
+                                 // 0 when the client does not report it (the browser client does not).
+    uint32_t average_bitrate;    // Desired average video bitrate in bits per second (encoder target).
+    uint32_t maximum_bitrate;    // Desired maximum video bitrate in bits per second (encoder target).
     uint32_t fec_percent;        // Forward-error-correction repair percentage.
 } ovstream_qos_status_t;
 
@@ -694,7 +698,7 @@ typedef enum
 typedef enum
 {
     OVSTREAM_WEBRTC_TRANSPORT_ALL    = 0, // Direct paths first, TURN relay as fallback (default).
-    OVSTREAM_WEBRTC_TRANSPORT_RELAY  = 1, // TURN relay only.
+    OVSTREAM_WEBRTC_TRANSPORT_RELAY  = 1, // TURN relay only; requires at least one TURN server.
     OVSTREAM_WEBRTC_TRANSPORT_DIRECT = 2, // Direct paths only; TURN entries are ignored.
 } ovstream_webrtc_transport_policy_t;
 
@@ -869,6 +873,7 @@ typedef struct
     uint32_t                height;       // Stream height in pixels (default 1080).
     uint16_t                target_fps;   // Target frames per second (default 60).
     uint16_t                stream_port;  // Media transport port (0 = default: 8554 RTSP, 47998 WebRTC, 47999 native; ignored for SHM and CUDASHM).
+                                          // A native server whose port is taken falls back to an OS-assigned port, which its clients learn through the handshake.
     ovstream_video_input_t  video_input;  // See ovstream_video_input_t. Must be CUDA or TENSOR for SHM and CUDASHM.
     int32_t                 cuda_device;  // GPU ordinal for raw-CUDA input. Any negative value uses the backend default (-1 by convention; WebRTC/native display adapter, SHM/CUDASHM the calling thread's current device). Set to the producer's device on multi-GPU hosts.
     uintptr_t               cuda_context; // Producer's CUcontext (cast to uintptr_t) paired with cuda_device. WebRTC/native only; ignored when cuda_device < 0. REQUIRED if the producer allocates frames in its own context (Warp, ovrtx, most renderers); 0 is only safe when frames live in the device's primary context (e.g. plain cudaMalloc).
@@ -1040,10 +1045,13 @@ typedef struct
 //       buffer directly and cannot register memory from a CUDA memory
 //       pool (cudaMallocAsync), so such frames are rejected with an
 //       error.
-//     - RTSP raw-CUDA copies the source into a server-owned device
-//       slot on a dedicated CUDA stream and synchronizes; RTSP
-//       pre-encoded copies the bitstream bytes into a freshly
-//       allocated GstBuffer.
+//     - RTSP raw-CUDA copies the source into one of a small ring of
+//       server-owned device slots on a dedicated CUDA stream and
+//       synchronizes. If a client has stopped reading and every slot
+//       is still held by the encoder, the call waits a few
+//       milliseconds and then drops the frame rather than blocking
+//       until the client catches up. RTSP pre-encoded copies the
+//       bitstream bytes into a freshly allocated GstBuffer.
 //   Outside the resizable exception above, the caller may freely
 //   reuse or free `buffer` (and any backing CUDA allocation, host
 //   allocation, or DLTensor `data` pointer) immediately after

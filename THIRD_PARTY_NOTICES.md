@@ -8,7 +8,7 @@ ovstream binary distributions bundle a small number of third-party components al
 
 - **License:** Proprietary, NVIDIA Corporation. StreamSDK falls under the same NVIDIA Proprietary terms as ovstream itself — see `PACKAGE-LICENSES/ovstream-LICENSE.txt` for the binding text. There is no separate StreamSDK license file.
 - **What it is:** The streaming engine that powers ovstream's WebRTC and native protocols. Provides hardware-accelerated H.264 / H.265 / AV1 encoding via NVENC, signaling, and bidirectional data channels.
-- **OSS components carried by StreamSDK:** the StreamSDK server libraries that ovstream redistributes statically link or dynamically depend on a handful of upstream OSS components — OpenSSL, POCO, libsrtp, ENet, Opus, spdlog, libguarded, libre, and STUN Client. The aggregated upstream license texts for those components live at `PACKAGE-LICENSES/oss-licenses-streamsdk-server.md` inside the wheel / release archive.
+- **OSS components carried by StreamSDK:** the StreamSDK server libraries that ovstream redistributes statically link or dynamically depend on a handful of upstream OSS components — OpenSSL, libexpat, POCO, libsrtp, ENet, Opus, spdlog, libguarded, libre, and STUN Client. The aggregated upstream license texts for those components live at `PACKAGE-LICENSES/oss-licenses-streamsdk-server.md` inside the wheel / release archive.
 
 ### GStreamer (≥ 1.24)
 
@@ -42,6 +42,11 @@ ovstream binary distributions bundle a small number of third-party components al
 
 - **License:** [NVIDIA CUDA Toolkit End-User License Agreement](https://docs.nvidia.com/cuda/eula/index.html). The redistributable runtime components (`cudart`) ship under ovstream's own NVIDIA Proprietary terms — see `PACKAGE-LICENSES/ovstream-LICENSE.txt` — as permitted by the CUDA EULA's redistribution clause.
 - **What it is:** The runtime portion of the CUDA Toolkit, required for the zero-copy CUDA buffer streaming path. Loaded dynamically at runtime; the NVIDIA display driver provides the matching CUDA driver API.
+
+### `@nvidia/ov-web-rtc` browser client
+
+- **What it is:** The browser-side WebRTC client library bundled as `examples/webrtc_client/ov-web-rtc.umd.cjs` for the example page. It is part of the example sources, not of the library or the Python wheel.
+- **OSS components embedded in the bundle:** `webrtc-adapter` (BSD-3-Clause; Copyright (c) 2014, The WebRTC project authors) and `@opentelemetry/api` (Apache License 2.0; Copyright The OpenTelemetry Authors).
 
 ## Why these components and not others
 

@@ -1,6 +1,25 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: app-messaging
 description: Application-level messaging with the browser client via ovstream_utils.messaging — event types, correlation ids, automatic splitting and reassembly of large payloads, and per-event handlers on top of the raw app-message envelope. Use when user asks how to send or receive application events/JSON to the browser client, how large messages are chunked, what event_type/id/part/numParts mean, or how to port omni.kit.livestream.messaging usage to ovstream.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - messaging
+  - browser
+  - webrtc
+tools:
+  - Read
+  - Grep
 ---
 
 # Application Messaging

@@ -11,7 +11,7 @@
 
 # /// script
 # requires-python = ">=3.8"
-# dependencies = ["ovstream"]
+# dependencies = ["ovstream>=0.5.5"]
 # ///
 
 """Stream a CUDA frame over the SHM transport, with a colocated reader.

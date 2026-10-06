@@ -11,6 +11,8 @@ def Scope "Render"
     def RenderProduct "Stream"
     {
         uniform int2 resolution = (1920, 1080)
+        # Render on CUDA-visible GPU 0, the device the script passes as cuda_device.
+        uint[] deviceIds = [0]
         rel camera = </World/Camera>
         rel orderedVars = [ <LdrColor>, <BgraColor> ]
 

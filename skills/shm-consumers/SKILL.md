@@ -1,6 +1,24 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: shm-consumers
 description: Writing an SHM reader/consumer that attaches to an ovstream SHM producer. Use when user asks about consuming SHM frames, reading from shared memory, writing an OpenCV / Electron / custom viewer, or multi-reader patterns.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - shm
+  - consumer
+tools:
+  - Read
+  - Grep
 ---
 
 # SHM Consumers
@@ -48,7 +66,7 @@ The C API surface (`type` is `OVSTREAM_CLIENT_SHM`, with `config.shm.stream_name
 - `ovstream_client_send_unicode(client, text)` — see [Reverse channel](#reverse-channel-driving-the-producer-from-the-consumer).
 - `ovstream_client_set_message_callback(client, cb, user_data)` — see [Reverse channel](#reverse-channel-driving-the-producer-from-the-consumer).
 
-The returned `ovstream_frame_t` carries `source == OVSTREAM_CLIENT_SHM`; for SHM the pixels are host-resident in `frame.data`. Same shape as the Python wrapper. Useful when writing an Electron N-API addon or a non-Python desktop consumer. For third-party clients that need to speak the wire protocol directly (no `ovstream_client` link), the protocol is documented in the "SHM transport wire protocol" section of `docs/ARCHITECTURE.md`.
+The returned `ovstream_frame_t` carries `source == OVSTREAM_CLIENT_SHM`; for SHM the pixels are host-resident in `frame.data`. Same shape as the Python wrapper. Useful when writing an Electron N-API addon or a non-Python desktop consumer. `ovstream_shm_client` exports the same API without the native transport (no StreamSDK); link it instead when the consumer process must not load StreamSDK. For third-party clients that need to speak the wire protocol directly (no `ovstream_client` link), the protocol is documented in the "SHM transport wire protocol" section of `docs/ARCHITECTURE.md`.
 
 ## Reverse channel: driving the producer from the consumer
 
@@ -87,7 +105,7 @@ Spawn N readers, all using the same stream name; each gets its own copy of the n
 
 ## Resilience
 
-- If the producer is killed (clean exit or hard kill), `wait_frame` returns `None` and `is_alive` flips. Reader should detect that and exit cleanly.
+- If the producer is killed (clean exit or hard kill), `wait_frame` returns `None` and `is_alive` flips. The reader should detect that and close its client (or exit): on Windows the region's name stays taken while any reader holds it, so a producer cannot restart on the same stream name until every reader has closed.
 - If the reader is killed, the producer's `on_connection(False)` fires shortly after.
 - Producer or reader can start first; the other waits via attach-with-retry (Python example does a 5-second deadline loop).
 
@@ -95,8 +113,8 @@ Spawn N readers, all using the same stream name; each gets its own copy of the n
 
 Pick any short ASCII string. The same name must be used on both sides. POSIX `shm_open` regions persist until explicitly `shm_unlink`'d — the producer unlinks at clean shutdown, but a hard-killed producer leaves the region behind:
 
-- Linux: `rm /dev/shm/ovstream-<stream_name>` to clean up manually. (The next producer `start()` with the same name also unlinks any stale region before recreating, so this is rarely necessary in practice.)
-- Windows: named-section handle is reference-counted by the kernel and closes when the last process exits; no manual cleanup needed.
+- Linux: `rm /dev/shm/ovstream-<stream_name>`; the next producer `start()` on that name fails until the file is gone (the control socket is reclaimed automatically, the region is not, so two live producers can never share a name).
+- Windows: the named mapping is reference-counted by the kernel and disappears once every process that opened it has closed it, including readers that outlived the producer; no files to remove, but a producer cannot restart on the name while a reader still holds it.
 
 ## Key Types / Functions
 

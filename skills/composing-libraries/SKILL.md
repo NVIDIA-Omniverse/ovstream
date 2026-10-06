@@ -1,6 +1,26 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: composing-libraries
 description: Composing ovstream with ovrtx, ovstage and ovui into one application — ownership of the scene, frames and CUDA streams, the per-tick order, one loop with two cadences, startup and shutdown order. Use when user asks how to build a streaming app from several OV libraries, how ovrtx output reaches ovstream, who owns the frame buffers, or in what order to create and tear down the renderer, UI and servers.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - ovrtx
+  - ovstage
+  - ovui
+  - composition
+tools:
+  - Read
+  - Grep
 ---
 
 # Composing OV Libraries into a Streaming Application

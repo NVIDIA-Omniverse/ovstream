@@ -143,6 +143,13 @@ shared with any other library in the process that uses the same ones;
 see "One GStreamer and one CUDA runtime per process" under Common
 gotchas.
 
+Callbacks run on the SDK's threads. An exception raised inside
+`on_signaling_headers` rejects that connection; an exception raised
+inside any other callback is reported by `ctypes` on stderr and the
+SDK continues. Out-of-range integers in `ServerConfig` and the frame
+dataclasses raise `ValueError` rather than truncating to the C field
+width.
+
 ## Lazy backend registration
 
 `ovstream_initialize` is cheap: it registers two lazy factory
@@ -243,6 +250,31 @@ definition.
 - `config.cuda_device` selects the encoder GPU, applied as the
   `nvh264enc cuda-device-id` property; `-1` uses the element's
   registered device.
+- A client that stops reading does not stall the producer. Raw CUDA
+  frames are staged through a small ring of server-owned buffers that
+  the encoder releases as it consumes them; once a stalled connection
+  leaves every buffer held, `ovstream_stream_video` waits a few
+  milliseconds and then drops the frame, logged at verbose level,
+  instead of blocking until the client catches up.
+- All clients share one pipeline, created when the first client
+  connects and torn down when the last one disconnects. The teardown
+  closes the encoder session, which typically takes 100 to 250 ms,
+  and a DESCRIBE or PLAY arriving in that window is answered
+  `503 Service Unavailable`; clients should retry (ffmpeg and PyAV
+  do not by default).
+- Frames are timestamped on the media pipeline's running-time clock:
+  a frame without a producer timestamp takes the time it was pushed,
+  and producer timestamps keep their spacing anchored to the running
+  time of the first one after a client connects. The pipeline's sinks
+  release buffers when the running time reaches their PTS, so this is
+  what keeps end-to-end latency at the encode plus network cost rather
+  than holding frames behind a PTS the clock has not reached.
+- Raw CUDA input is bounded by NVENC throughput. The pipeline's
+  source holds one frame; when a frame arrives while the encoder has
+  not pulled the previous one, the older frame is replaced and
+  `ovstream_stream_video` still returns success. The replacement is
+  counted and logged (warning on the first occurrence and periodically
+  after, verbose otherwise). Pre-encoded input has no such ceiling.
 - `OVSTREAM_VIDEO_INPUT_CUSTOM` lets the caller supply a verbatim
   GStreamer pipeline string via `config.rtsp.pipeline`. It is
   pre-encoded / host-buffer only; raw-CUDA through a custom pipeline
@@ -276,13 +308,25 @@ definition.
   the buffer's device doesn't match.
 - `cuda_context` is **required** alongside `cuda_device` when the
   producer renders into its own CUDA context (Warp and most
-  renderers; ovrtx 0.5 render outputs live in the primary context): StreamSDK copies the input through that context, and with
+  renderers; an ovrtx 0.5 render output is readable from the primary context only while ovrtx sees a single GPU): StreamSDK copies the input through that context, and with
   `cuda_context = 0` it falls back to the device's primary context,
   which cannot read a buffer owned by a different context — the copy
   fails with `CUDA error invalid argument: Copying device buffer to
   VideoFrameResourceCuda`. `0` is safe only when the frames already live
   in the primary context (plain `cudaMalloc`). The device-match check
   above does not catch this — the device matches; the context doesn't.
+- A WebRTC server and a native server in one process must not share a
+  CUDA context. StreamSDK uses one adapter context for the two
+  sessions when both are created with the same `cuda_device` /
+  `cuda_context` and tears it down when the first of them ends, so the
+  other server's next frame submission faults inside StreamSDK and its
+  `stop` no longer returns. Two WebRTC servers are not affected. Run
+  the pair in separate processes, or pin at most one of them with
+  `cuda_device`.
+- One client connection per server. A second client cannot attach
+  while one is connected; applications that need more viewers start
+  more servers on distinct ports. RTSP is the transport that serves
+  several clients from one server.
 - StreamSDK's ERROR level is conservative — many things it reports
   as errors are recoverable conditions, so the SDK remaps them to
   WARN before delivering to the user's log callback.
@@ -296,7 +340,13 @@ definition.
 - `webrtc.audio_capture` hands the audio stream to StreamSDK's
   capture module, which streams all host audio output;
   `ovstream_stream_audio` then returns `NOT_SUPPORTED`. Falls back to
-  pushed audio if the module cannot be created.
+  pushed audio if the module cannot be created. On Linux capture goes
+  through the PulseAudio API (native PulseAudio or pipewire-pulse): it
+  creates `NvidiaGameStreamSink` / `NvidiaGameStreamSource` null
+  devices and switches the session default sink and source to them
+  while capture is active. The previous defaults are not restored when
+  capture stops; an application that needs them back must save them
+  before `start` and restore them after `stop`.
 - `webrtc.event_tracing` enables StreamSDK event tracing (ETL) for
   that server, for diagnostics. Off by default.
 - STUN / TURN credentials are supplied via
@@ -339,6 +389,11 @@ definition.
   and the message / input / unicode user callbacks all work on SHM,
   via a sibling Unix-domain-socket / named-pipe endpoint. `stream_audio`
   is not supported (returns `NOT_SUPPORTED`).
+- Readers receive the newest published frame, not a backlog: a reader
+  slower than the producer skips the frames published while it was
+  busy, and a frame it holds stays valid until the producer's ring
+  wraps back onto that slot. The same applies to CUDASHM. See the
+  consumer read algorithm in the wire protocol section below.
 - Wire format (segment layout, frame header, ring-buffer semantics,
   control-channel protocol) is documented in the
   [SHM transport wire protocol](#shm-transport-wire-protocol) section
@@ -515,19 +570,25 @@ succeeds on every backend but only fires there.
 
 QoS hints (`ovstream_set_qos_callback`) are related but are NOT
 stream messages: they are StreamSDK network feedback (recommended
-resolution / frame rate, round-trip delay, bitrates) delivered
-directly from the backend, with no wire message involved.
+resolution / frame rate, round-trip delay derived from client
+feedback, encoder target bitrates) delivered directly from the
+backend, with no wire message involved.
 
 ## Resolution semantics
 
 `config.width` / `config.height` are the stream's **maximum**
-extents; whether the resolution may vary within them is per-backend:
+extents; whether the resolution may vary within them is per-backend.
+WebRTC and native accept 256 to 4096 pixels on each axis, width a
+multiple of 8 and height even; a `config.width` / `height` outside
+that range or alignment is adjusted at start, logged at warning level,
+and the adjusted size is the one frames must then match. RTSP takes
+the configured size only.
 
 | Backend | Resolution |
 |---|---|
 | SHM / CUDASHM | Always resizable: slots are preallocated at the maximum, per-slot headers carry each frame's actual dimensions, and consumers react to changes (see the SHM wire protocol below). |
-| WebRTC / native | Opt-in via `webrtc.resizable`: per-frame dimensions set the current resolution, clamped to the maximum and floored to the alignment rules by the SDK (width to a multiple of 8, height to even) — unaligned dimensions are adjusted, not rejected. Trade-off: the encoder is preallocated at the maximum and StreamSDK's QoS-driven scaling + frame copying are disabled, so resolution is owned entirely by the application — and frames must come from a persistent allocation sized for the maximum (with frame copying disabled, the immediate-reuse buffer lifetime contract does not apply and per-frame reallocation is not supported). That allocation must be plain device memory (`cudaMalloc` / `cudaMallocPitch`): the encoder registers the buffer directly and cannot register memory from a CUDA memory pool (`cudaMallocAsync`, which is also Warp's default allocator), so `stream_video` rejects pool-allocated frames on a resizable stream with an explicit error rather than letting the encode session fail. Enabling it and continuing to submit fixed-size frames is also the supported way to opt out of QoS scaling. When false (the default), every frame must match `width` x `height` exactly. |
-| RTSP | Never: pipeline caps are fixed at start, and frames that differ from the configured size are rejected. |
+| WebRTC / native | Opt-in via `webrtc.resizable`: per-frame dimensions set the current resolution; a frame whose width or height exceeds the maximum established when the client connected (or falls below the 256-pixel minimum) is rejected with an error, and dimensions within that range are floored to the alignment rules by the SDK (width to a multiple of 8, height to even) — unaligned dimensions are adjusted, not rejected. Trade-off: the encoder is preallocated at the maximum and StreamSDK's QoS-driven scaling + frame copying are disabled, so resolution is owned entirely by the application — and frames must come from a persistent allocation sized for the maximum (with frame copying disabled, the immediate-reuse buffer lifetime contract does not apply and per-frame reallocation is not supported). That allocation must be plain device memory (`cudaMalloc` / `cudaMallocPitch`): the encoder registers the buffer directly and cannot register memory from a CUDA memory pool (`cudaMallocAsync`, which is also Warp's default allocator), so `stream_video` rejects pool-allocated frames on a resizable stream with an explicit error rather than letting the encode session fail. Enabling it and continuing to submit fixed-size frames is also the supported way to opt out of QoS scaling. When false (the default), every frame must match `width` x `height` exactly. |
+| RTSP | Never: pipeline caps are fixed at start, and frames that differ from the configured size are rejected. An application that feeds one resizable WebRTC stream and an RTSP stream from the same frames (as `app_stream --resizable` does) therefore sees RTSP reject every frame after the first resize until the frame returns to the configured size. |
 
 `webrtc.resizable` deliberately converges WebRTC/native onto the
 existing SHM convention rather than inventing a new one.
@@ -564,6 +625,14 @@ All raw-CUDA video paths are BGRA8 — bytes per pixel, in this order: B, G, R, 
 
 Pitch is the second alignment surface. For raw CUDA, `pitch_bytes` should be at least `width * 4`, and is conventionally aligned to 64 bytes for DMA efficiency (the SHM/CUDASHM ring rounds its `maxPitchBytes` to 64 for the same reason). Even widths are required by the NVENC encoder used in WebRTC/native and the `gstnvenc`-fronted RTSP backend; odd `config.width` values fail the start handshake rather than silently rounding (per-frame dimensions on a resizable stream are floored instead — see Resolution semantics).
 
+### Frames submitted before a client connects
+
+Video frames on WebRTC, native and RTSP servers, and audio frames on WebRTC and native servers, submitted while no client is connected are dropped and the call succeeds, so a producer streams at its own rate without checking connection state. RTSP also drops video frames between a client connecting and its media being configured, which happens after the connection callback, so a frame submitted from `on_connection` may still be dropped. Once a client is connected, WebRTC and native wait briefly (about 200 ms) for its video or audio stream to come up and report `ERROR` (video) or `TIMEOUT` (audio) if it does not. Drops are logged at verbose level. SHM and CUDASHM publish every frame into the ring whether or not a reader is attached, so a reader that attaches later starts from the latest slot.
+
+### A silent producer loses its clients
+
+StreamSDK closes a WebRTC or native connection whose producer has submitted no frame for 7000 ms, its default frame timeout; the server log reports `Unable to get a frame for 7000 ms` followed by a disconnect with reason `NVST_DISCONN_SERVER_TERMINATED_FRAME_GRAB_FAILED`, and `ovstream_is_client_connected` turns false. The server stays started and accepts the next connection, but resuming submission does not revive the one that closed, and the SDK's `Client` does not reconnect on its own. A producer that can stall for seconds (a modal dialog, a blocking asset load) should re-submit its last frame periodically during the stall, or raise the timeout through StreamSDK's own `SenderTimeout` setting: a value in milliseconds, read from the environment variable of that name or from a `SenderTimeout=<ms>` line in `$HOME/.config/regkeys.txt`, confirmed by the log line `Found SenderTimeout regkey`. ovstream exposes no setting of its own for it.
+
 ### Register callbacks BEFORE `ovstream_start`
 
 `ovstream_set_connection_callback`, `_message_callback`, `_input_callback`, and `_unicode_callback` can be called at any time, but they only deliver **future** transitions. Registering after `ovstream_start` returns means an in-flight first-connect or first-message event can fire before the callback is set and be lost — the SDK does not replay the initial state on registration. The same holds for the signaling-headers callback and for the resize-request callback on a `fit_client` stream, both of which fire during the client's connection handshake.
@@ -588,15 +657,17 @@ DLSS Frame Generation is enabled by the renderer (ovrtx reads two attributes on 
 
 ### One GStreamer and one CUDA runtime per process
 
-ovstream bundles GStreamer, GLib and the CUDA runtime so that installing it needs nothing else, and ovrtx bundles the same libraries. A process loads a given shared-library name once (`libcudart.so.12`, `libgstreamer-1.0.so.0`, `libglib-2.0.so.0` and their Windows equivalents), so with both libraries in one process whichever copy loaded first serves both. ovstream keeps that harmless by shipping the same builds ovrtx does, taken from the same dependency set:
+ovstream bundles GStreamer, GLib and the CUDA runtime so that installing it needs nothing else, and ovrtx bundles the same libraries. GStreamer and GLib are loaded by name (`libgstreamer-1.0.so.0`, `libglib-2.0.so.0` and their Windows equivalents), and a process loads a given shared-library name once, so with both libraries in one process whichever copy loaded first serves both. The CUDA runtime is different: ovrtx loads its copy by path when a renderer is created, so a process composing the two holds two `libcudart` images. Both cases are harmless for the same reason: ovstream ships the builds ovrtx does, taken from the same dependency set, so the copy that wins the name and the two cudart images are identical:
 
 | ovstream | GStreamer | GLib | CUDA runtime | Validated in one process with |
 |---|---|---|---|---|
 | 0.5.0 | 1.28.6 | 2.88.0 | 12.8 | ovrtx 0.5.0 |
 
-Earlier ovstream releases bundled GStreamer 1.24 and CUDA runtime 12.0: alongside an ovrtx that loaded first they ran on ovrtx's copies, and alongside one that loaded second ovrtx ran on theirs. Keep the two on matching rows, or load ovrtx first.
+Later releases bundle the same runtimes unless their changelog entry says otherwise; the exact versions shipped by any release are listed in its `PACKAGE-LICENSES/` directory. Earlier ovstream releases bundled GStreamer 1.24 and CUDA runtime 12.0: alongside an ovrtx that loaded first they ran on ovrtx's copies, and alongside one that loaded second ovrtx ran on theirs. Keep the two on matching rows, or load ovrtx first.
 
 GStreamer is also *initialised* once per process, with the environment in effect at that moment, so ovstream does not rely on the environment to find its plugins: on the first RTSP server creation it registers its bundled plugin directory explicitly, whether or not another library initialised GStreamer first, and fails server creation with the names of any elements still missing. The log records which GStreamer runtime is live when it was not ovstream's own. The WebRTC, native, SHM and CUDASHM backends do not use GStreamer and are unaffected.
+
+The same name-based loading means an *older* GLib or GStreamer already in the process wins: `import ovstream` after `import gi` on a system with GLib 2.80, or after a system GStreamer 1.24 has been loaded, fails with an "undefined symbol" error from the loader, because ovstream's newer bundled libraries bind to the resident older copy. Load ovstream before any system GLib/GStreamer consumer in the same process, and link C/C++ applications against one GStreamer. The bundled libraries keep their upstream names deliberately: that is what lets ovstream and ovrtx share one GStreamer.
 
 ### Resizable-stream buffers are registered, not copied
 
@@ -668,7 +739,7 @@ Both the shared-memory region and the control endpoint are named after a single 
 | Resource | Name |
 |---|---|
 | Shared memory | `/ovstream-<streamName>` (passed to `shm_open`) |
-| Wakeup primitive | `/ovstream-<streamName>-wake` (passed to `sem_open`) |
+| Wakeup primitive | none; readers wait on the region header's sequence word with a futex |
 | Control endpoint | `${TMPDIR:-/tmp}/ovstream-<streamName>.sock` (Unix domain socket, `SOCK_STREAM`) |
 
 ### Windows
@@ -679,7 +750,7 @@ Both the shared-memory region and the control endpoint are named after a single 
 | Wakeup primitive | `Local\ovstream-<streamName>-wake` (passed to `CreateEventA`, manual-reset event) |
 | Control endpoint | `\\.\pipe\ovstream-<streamName>` (named pipe, byte mode, duplex) |
 
-Producer-on-crash recovery: when a previous producer crashed without unlinking, a fresh `start()` first unlinks/destroys the stale region, semaphore, and socket file before recreating them. On Windows, named-pipe instances are reference-counted by the kernel; the new producer always creates with `FILE_FLAG_FIRST_PIPE_INSTANCE` and fails fast if the prior instance is still alive.
+Producer crash and stale names: a fresh `start()` unlinks a stale control socket left by a crashed producer, but the region itself is created exclusively (`O_EXCL`, and the equivalent `ERROR_ALREADY_EXISTS` check on Windows) and `start()` fails if a region with the same name still exists. This is deliberate: silently replacing the region would split readers between two producers that picked the same `stream_name`. The error names the file to remove (`/dev/shm/<name>` on Linux; on Windows the mapping disappears once every process that opened it has closed it, so a reader that keeps its client open after the producer died holds the name until it closes). On Windows, named-pipe instances are reference-counted by the kernel; the new producer always creates with `FILE_FLAG_FIRST_PIPE_INSTANCE` and fails fast if the prior instance is still alive.
 
 ---
 
@@ -770,7 +841,7 @@ Per `stream_video()` call (single producer, lock-free for readers):
 
 **Why `latestSlot` is stored before `latestSequence`:** the consumer's read algorithm in §4 snapshots `latestSequence` (step 4) and uses it as the freshness signal. Stores are release-ordered, so a reader observing the new `newSeq` is guaranteed to also see the matching `nextSlot` written in step 6 — the slot pointer is published *before* the sequence number that activates it. If the order were reversed, a reader could observe a fresh `newSeq` while still seeing the *previous* slot index, then read stale pixels from that slot and validate them against the old sequence (a false positive). The wakeup primitive in step 7 fires after both stores are visible, so blocked readers always wake to a consistent (slot, sequence) pair.
 
-`newSeq` is monotonically increasing; the first frame of a server lifetime is sequence `1`.
+`newSeq` is monotonically increasing; the first frame of a server lifetime is sequence `1`. Every successful `ovstream_stream_video` publishes exactly one frame, so a producer that needs to name the frame it just published — for example to a consumer over its own control channel — can derive its sequence as the count of successful `ovstream_stream_video` calls since `ovstream_start`, without reading the region back.
 
 ---
 
@@ -806,7 +877,7 @@ Two line-length tiers apply:
 |---|---|
 | `ATTACH protocolVersion=<u32>` | Client requests attachment. Sent once after connecting. Subsequent ATTACH lines on the same connection are ignored. |
 | `DETACH` | Clean detach. The server treats subsequent connection close as already-detached. |
-| `INPUT_KEY keyCode=<u32> scanCode=<u32> modifiers=<u32> state=<u32> tsUs=<u64>` | Keyboard event. `state` is `0`=up / `1`=down; `modifiers` is an opaque `uint16` bitmask (Shift / Ctrl / Alt / Meta — the exact bit assignment is producer-side and not part of the wire protocol). Dispatched to the producer's input callback as an `OVSTREAM_INPUT_KEYBOARD` event. |
+| `INPUT_KEY keyCode=<u32> scanCode=<u32> modifiers=<u32> state=<u32> tsUs=<u64>` | Keyboard event. `state` is `0`=up / `1`=down; `modifiers` carries the `OVSTREAM_MODIFIER_*` bits (`SHIFT` 0x0001, `CONTROL` 0x0002, `ALT` 0x0004, `SUPER` 0x0008, `CAPS_LOCK` 0x0010, `NUM_LOCK` 0x0020; Python `KeyboardModifier`) and is passed through unchanged over SHM and CUDASHM. Dispatched to the producer's input callback as an `OVSTREAM_INPUT_KEYBOARD` event. |
 | `INPUT_MOUSE type=<u32> modifiers=<u32> x=<i32> y=<i32> data=<i32> data2=<i32> btnState=<u32> tsUs=<u64> scrollX=<float> scrollY=<float>` | Mouse event. `type` selects `move` / `button` / `wheel`; field interpretation mirrors `ovstream_mouse_event_t`. Floats use `%.9g` so single-precision values round-trip losslessly. |
 | `INPUT_GAMEPAD control=<u32> position=<i32> gamepadId=<u32> tsUs=<u64>` | Gamepad axis / button event. `control` indexes `ovstream_gamepad_control_t`; `position` is the per-control value. |
 | `INPUT_TOUCH lowLevel=<u32> modifiers=<u32> srcW=<u32> srcH=<u32> tsUs=<u64> count=<u32> [id=<u32> phase=<u32> x=<float> y=<float> xr=<float> yr=<float> pts=<u64>] × count` | Multi-touch event. The fixed header is followed by `count` (≤ 11) space-separated per-contact groups parsed positionally; field interpretation mirrors `ovstream_touch_event_t`. `phase` indexes `ovstream_touch_phase_t`; coordinates are normalized `[0,1]`. A data-bearing line (may exceed 256 bytes). Dispatched as an `OVSTREAM_INPUT_TOUCH` event. |
@@ -873,6 +944,16 @@ package. They are convenience layers, not separate sources of truth —
 for SHM the bytes-on-the-wire contract specified above is the actual
 ABI, and writing a third-party SHM client in any language is supported
 as long as it follows this document.
+
+Two builds of the client library ship. `ovstream_client` carries all
+three transports and therefore links StreamSDK and the CUDA runtime.
+`ovstream_shm_client` exports the same API without the NATIVE
+transport: it links only the CUDA runtime, carries no StreamSDK, and
+`ovstream_create_client(OVSTREAM_CLIENT_NATIVE, …)` returns
+`NOT_SUPPORTED`. A consumer that only attaches to SHM / CUDASHM
+producers — or one whose process must not load StreamSDK — loads it in
+place of `ovstream_client`; `ovstream.Client` does so automatically
+when the full library is absent.
 
 
 # Frame pacing utility (ovstream_utils)
@@ -1194,11 +1275,14 @@ while (now_ns() < deadlineNs)
 }
 ```
 
-The spin threshold trades CPU for accuracy: 500 µs is well above the
-worst-case timer-resolution we observe on Windows without
-`timeBeginPeriod(1)` (≈1 ms), and well below typical Linux/macOS
-wakeup jitter. The spin yields rather than busy-spinning so we don't
-starve other threads on the same core.
+The spin threshold trades CPU for accuracy. On Windows the sleep
+waits on a per-thread high-resolution waitable timer, so the wakeup
+lands within a few hundred microseconds of the request instead of
+at the next ~15.6 ms scheduler tick, and tick jitter stays near the
+500 µs spin threshold without any process-global timer-resolution
+change (`timeBeginPeriod` is never called). On Linux/macOS 500 µs is
+well above typical wakeup jitter. The spin yields rather than
+busy-spinning so we don't starve other threads on the same core.
 
 ### Measurement phase
 

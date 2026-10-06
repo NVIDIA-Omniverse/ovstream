@@ -12,7 +12,7 @@
 # /// script
 # requires-python = ">=3.8"
 # dependencies = [
-#     "ovstream",
+#     "ovstream>=0.5.5",
 #     "warp-lang",
 # ]
 # ///
@@ -275,10 +275,7 @@ def main():
                         ),
                     )
                     for s in servers:
-                        try:
-                            s.stream_video(video_frame)
-                        except ovstream.OvstreamError:
-                            pass
+                        s.stream_video(video_frame)
 
                     print(f"\rFPS: {t.stats.fps_current}", end="", flush=True)
                     frame_count = t.frame_index + 1

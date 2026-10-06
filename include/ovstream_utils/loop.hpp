@@ -17,6 +17,16 @@
 #include <limits>
 #include <thread>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace ovstream_utils
 {
 
@@ -112,11 +122,85 @@ inline Loop::Loop(const Config& a_config) noexcept
     reconfigure(a_config);
 }
 
+#ifdef _WIN32
+namespace detail
+{
+
+//--------------------------------------------------------------
+// Per-thread high-resolution waitable timer. Wakes within a few
+// hundred microseconds of the requested time instead of at the
+// next scheduler tick, without changing the process-wide timer
+// resolution. The handle is null where the OS does not support
+// high-resolution timers; `waitFor` then reports failure so the
+// caller can fall back to a plain sleep.
+//--------------------------------------------------------------
+class HighResolutionTimer
+{
+public:
+    HighResolutionTimer() noexcept
+    {
+#ifdef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+        constexpr DWORD kHighResolution = CREATE_WAITABLE_TIMER_HIGH_RESOLUTION;
+#else
+        constexpr DWORD kHighResolution = 0x00000002;
+#endif
+        m_handle = CreateWaitableTimerExW(nullptr, nullptr, kHighResolution, TIMER_ALL_ACCESS);
+    }
+
+    ~HighResolutionTimer()
+    {
+        if (m_handle != nullptr)
+        {
+            CloseHandle(m_handle);
+        }
+    }
+
+    HighResolutionTimer(const HighResolutionTimer&)            = delete;
+    HighResolutionTimer& operator=(const HighResolutionTimer&) = delete;
+
+    bool waitFor(uint64_t durationNs) noexcept
+    {
+        if (m_handle == nullptr)
+        {
+            return false;
+        }
+        // A negative due time is relative, in 100 ns units.
+        const uint64_t units = durationNs / 100u;
+        if (units == 0u)
+        {
+            return true;
+        }
+        LARGE_INTEGER dueTime;
+        dueTime.QuadPart = -static_cast<LONGLONG>(units);
+        if (!SetWaitableTimer(m_handle, &dueTime, 0, nullptr, nullptr, FALSE))
+        {
+            return false;
+        }
+        return WaitForSingleObject(m_handle, INFINITE) == WAIT_OBJECT_0;
+    }
+
+private:
+    HANDLE m_handle = nullptr;
+};
+
+//--------------------------------------------------------------
+inline HighResolutionTimer& threadHighResolutionTimer() noexcept
+{
+    thread_local HighResolutionTimer timer;
+    return timer;
+}
+
+} // namespace detail
+#endif // _WIN32
+
 //--------------------------------------------------------------
 inline void Loop::waitUntil(uint64_t deadlineNs) noexcept
 {
-    // 0.5 ms covers normal kernel timer granularity on Windows
-    // and is well below the typical Linux/macOS wakeup jitter.
+    // The sleep below wakes within a few hundred microseconds of
+    // the request on every platform (on Windows via a per-thread
+    // high-resolution waitable timer rather than the ~15.6 ms
+    // scheduler tick), so 0.5 ms of spin absorbs the remaining
+    // wakeup latency.
     constexpr uint64_t kSpinThresholdNs = 500'000ull;
 
     // Sleep until reaching spin threshold.
@@ -124,7 +208,14 @@ inline void Loop::waitUntil(uint64_t deadlineNs) noexcept
     if (deadlineNs > beforeSleepNs + kSpinThresholdNs)
     {
         const uint64_t sleepNs = deadlineNs - beforeSleepNs - kSpinThresholdNs;
+#ifdef _WIN32
+        if (!detail::threadHighResolutionTimer().waitFor(sleepNs))
+        {
+            std::this_thread::sleep_for(std::chrono::nanoseconds(sleepNs));
+        }
+#else
         std::this_thread::sleep_for(std::chrono::nanoseconds(sleepNs));
+#endif
     }
 
     // Spin until reaching deadline.

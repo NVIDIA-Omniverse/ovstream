@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-10-01
+### Added
+- Examples: `webrtc_client/playwright_client.py`, a headless browser client for automation.
+- `ovstream_shm_client`: the client library built without the native transport (StreamSDK).
+
+### Changed
+- Examples: minimum CMake version raised from 3.18 to 3.24.
+- StreamSDK updated to a newer 04.86 point release to pick up an OpenSSL security fix.
+- Python: importing `ovstream` fails with the loader's error when the native library cannot be loaded.
+- `ovstream_stream_video` / `ovstream_stream_audio` do not error if no client is connected (frame is dropped).
+- Native: servers bind `stream_port` (default 47999) instead of StreamSDK's fixed UDP 47998, so several can serve clients on one host.
+
+### Fixed
+- RTSP: `ovstream_stream_video` no longer blocks when a client stops reading (frame is dropped).
+- RTSP: use-after-free when a client connects while frames are being streamed.
+- RTSP: `ovstream_start` accepting raw-CUDA sizes H.264 encoder cannot encode.
+- RTSP: incorrect frame timestamps adding latency / drops at high frame rates.
+- RTSP: `ovstream_start` failures report "unknown error" instead of the cause.
+- RTSP: GStreamer warnings still printing to stderr after `ovstream_shutdown`.
+- RTSP: crash at process exit when clients have only probed (DESCRIBE) stream.
+- RTSP: Windows `ovstream_create_server` blocked ~20s on network locale probe.
+- WebRTC/native: pre-encoded frames after the first are rejected by StreamSDK.
+- WebRTC/native: `ovstream_start` fails when signaling port is already in use.
+- WebRTC/native: event tracing support for multiple servers using ETLi format.
+- WebRTC/native: issues with left Super key and modifier bits on input events.
+- WebRTC/native: primary-context `cuda_device` ignored if `cuda_context` is 0.
+- WebRTC/native: `ovstream_send_app_message` failing inside message callbacks.
+- WebRTC: `RELAY` transport policy without TURN server ignored (now rejected).
+- SHM/CUDASHM: Linux readers blocked in `wait_frame` waking for frame publish.
+- SHM/CUDASHM: Windows readers failing with `ERROR_PIPE_BUSY` while attaching.
+- SHM: raw-CUDA rejecting frames when the source pitch exceeds the slot pitch.
+- `ovstream_start` rejects a `cuda_device` that CUDA runtime does not know of.
+- Creating a native client no longer changes the calling thread's CUDA device.
+- Examples: a WebRTC client page clears its connected state when server stops.
+- Examples: `ovrtx_stream` needs to create the ovstage before the ov renderer.
+- `ovstream_utils`: `Loop` tick jitter on Windows from the 15.6ms granularity.
+
 ## [0.5.4] - 2026-09-23
 ### Fixed
 - Packaging: the Linux package now ships individual third-party notice files.

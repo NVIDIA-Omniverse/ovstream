@@ -60,7 +60,7 @@ Pass `rtsp`, `native`, `shm`, or `cudashm` as arguments to switch transport — 
 
 ## Getting Started in C
 
-The C/C++ examples require CMake and a development environment. On Windows this is provided by [Visual Studio 2019 or newer](https://visualstudio.microsoft.com/). On Linux (Ubuntu):
+The C/C++ examples require CMake 3.24 or newer, a development environment, and the [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) (`nvcc`) for the examples that fill CUDA frame buffers, including `basic_stream` below; `pre_encoded_stream` builds without it. On Windows the development environment is provided by [Visual Studio 2019 or newer](https://visualstudio.microsoft.com/). On Linux (Ubuntu; the stock `cmake` package on 22.04 is 3.22, use [Kitware's APT repository](https://apt.kitware.com/) or `pip install cmake` there):
 
 ```bash
 sudo apt-get install build-essential cmake
@@ -105,6 +105,8 @@ The Releases page of this repository contains binary builds for the official rel
  * Linux aarch64
 
 The libraries require a compatible NVIDIA RTX-capable GPU with a compatible NVIDIA driver on the system. More detailed system requirements can be found at https://docs.omniverse.nvidia.com/dev-guide/latest/common/technical-requirements.html
+
+On Windows, the WebRTC and native servers must run in a logged-on user's session: StreamSDK creates its video adapter context with Direct3D, which is not available to processes in session 0 (Windows services, scheduled tasks running as SYSTEM, SSH shells). `ovstream_start` fails there with `NVST_DISCONN_SERVER_VIDEO_ADAPTER_INITIALIZE_D3D_FAILED`. RTSP, SHM and CUDASHM servers have no such requirement.
 
 ## Documentation
 

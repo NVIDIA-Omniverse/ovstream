@@ -12,7 +12,7 @@
 # /// script
 # requires-python = ">=3.12,<3.14"
 # dependencies = [
-#     "ovstream>=0.5",
+#     "ovstream>=0.5.5",
 #     "ovrtx>=0.5,<0.7",
 #     "ovstage>=0.2",
 #     "ovui>=0.2",

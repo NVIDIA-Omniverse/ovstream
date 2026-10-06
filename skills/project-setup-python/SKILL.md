@@ -1,6 +1,24 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: project-setup-python
 description: Setting up a new Python project that uses ovstream. Use when user asks to create a new Python project, set up ovstream in Python, create a pyproject.toml, or scaffold a streaming app.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - python
+  - setup
+tools:
+  - Read
+  - Grep
 ---
 
 # Project Setup (Python)
@@ -93,4 +111,4 @@ with ovstream_utils.Loop(ovstream_utils.LoopConfig(fps_target=60)) as loop:
 - ovstream requires Python 3.8 or newer. (ovrtx is more restrictive at 3.10–3.13; if your app composes both, follow ovrtx's range.)
 - ovstream requires an NVIDIA GPU with a compatible driver. The bundled CUDA runtime needs the **driver-side** CUDA library (`libcuda.so.1` / `nvcuda.dll`) installed by the NVIDIA display driver.
 - The wheel is platform-tagged; `pip install` automatically picks the matching `linux-x86_64`, `linux-aarch64`, or `windows-x86_64` build.
-- If you see `ovstream.dll` / `libovstream.so` not found errors, the wheel install didn't complete — re-run `pip install ovstream`. Setting `OVSTREAM_LIB_PATH` is only needed when running from a source checkout without installing.
+- If you see `ovstream.dll` / `libovstream.so` not found errors, the wheel install didn't complete — run `pip install --force-reinstall --no-deps ovstream` (a plain `pip install ovstream` reports the version as already installed and restores nothing). Setting `OVSTREAM_LIB_PATH` is only needed when running from a source checkout without installing.

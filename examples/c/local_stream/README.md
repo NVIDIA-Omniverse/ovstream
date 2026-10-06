@@ -61,4 +61,4 @@ For a C / C++ consumer, see the `<ovstream/ovstream_client.h>` API (`ovstream_cr
 - `OVSTREAM_SERVER_SHM` server creation.
 - `cfg.shm.stream_name` configuration (the only knob unique to the SHM transport).
 - Connection callback firing when a reader attaches / detaches.
-- Clean shutdown on Ctrl+C unlinks the shared-memory region. (A hard kill leaves the region behind; the next `ovstream_start` with the same stream name unlinks any stale region before recreating, so a crashed producer doesn't permanently wedge the name.)
+- Clean shutdown on Ctrl+C unlinks the shared-memory region. A hard kill leaves it behind: on Linux remove `/dev/shm/ovstream-<name>` before restarting on the same name; on Windows the name frees once every process that opened the region has closed it, so close any viewer that outlived the producer first.

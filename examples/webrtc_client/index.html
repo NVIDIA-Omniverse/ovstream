@@ -256,11 +256,12 @@ its affiliates is strictly prohibited.
                 setControlsConnected(true);
 
                 try {
-                    // The server dictates the initial stream resolution
-                    // (whatever was passed to ovstream_start); the client
-                    // deliberately does not send width/height here. The
-                    // "Fit to window" toggle requests resizes after
-                    // connecting.
+                    // No width/height is set here, so the library sends
+                    // its own default stream size for this device class
+                    // with the connect request; the server adopts it only
+                    // when started with webrtc.fit_client, otherwise the
+                    // resolution passed to ovstream_start stands. The "Fit
+                    // to window" toggle requests resizes after connecting.
                     const result = await streamer.connect({
                         streamSource: StreamType.DIRECT,
                         logLevel: 2,
@@ -323,7 +324,6 @@ its affiliates is strictly prohibited.
                                 }
                             },
                             onStop: (msg) => {
-                                if (msg.action !== 'terminate') return;
                                 if (msg.status === 'error') {
                                     console.error('Stream stopped with error:', msg.info);
                                     setStatus('error', 'Disconnected');

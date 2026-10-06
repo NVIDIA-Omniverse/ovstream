@@ -11,7 +11,7 @@
 
 # /// script
 # requires-python = ">=3.8"
-# dependencies = ["ovstream"]
+# dependencies = ["ovstream>=0.5.5"]
 # ///
 
 """Stream a CUDA frame via WebRTC, RTSP, native, SHM, or any combination.
@@ -290,10 +290,7 @@ def main():
                     _cudart.cudaMemset(cuda_ptr, fill, frame_size)
 
                     for s in servers:
-                        try:
-                            s.stream_video(frame)
-                        except ovstream.OvstreamError:
-                            pass
+                        s.stream_video(frame)
 
                     print(f"\rFPS: {t.stats.fps_current}", end="", flush=True)
                     frame_count = t.frame_index + 1

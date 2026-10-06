@@ -1,6 +1,24 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: cuda-interop
 description: CUDA buffer allocation, pitch alignment, BGRA channel order, and ctypes-bound cudart usage. Use when user asks about CUDA interop, pitched allocations, frame layout, or zero-copy GPU integration.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - cuda
+  - buffers
+tools:
+  - Read
+  - Grep
 ---
 
 # CUDA Interop
@@ -65,11 +83,11 @@ When you feed multiple servers from one buffer (e.g. WebRTC + RTSP simultaneousl
 
 ## Multi-GPU device selection
 
-On a multi-GPU host the GPU your frames live on is often **not** the GPU the backend uses by default: WebRTC/native default to StreamSDK's display adapter, RTSP to the encoder element's registered device, and SHM/CUDASHM to the calling thread's current device. A mismatch yields a connected client with no decodable video (WebRTC/native) or a cross-device copy failure (SHM/CUDASHM).
+On a multi-GPU host the GPU your frames live on is often **not** the GPU the backend uses by default: WebRTC/native default to StreamSDK's display adapter, RTSP to the encoder element's registered device, and SHM/CUDASHM to the calling thread's current device. A mismatch yields a connected client with no decodable video (WebRTC/native) or an encoder failure at the first client (RTSP). SHM and CUDASHM copy the frame across devices through the CUDA runtime, which works without peer access but is slower than a same-device copy and reports nothing, so a wrong `cuda_device` there costs bandwidth rather than failing.
 
 Set `ServerConfig.cuda_device` (C: `config.cuda_device`) to the ordinal your frame buffers are allocated on — every CUDA-input backend honors it.
 
-**For WebRTC/native, also pass `cuda_context`** — the producer's `CUcontext` as an int. This is **required** whenever the producer allocates frames in its own CUDA context, which Warp and most real renderers do. StreamSDK encodes from the device pointer through that context; with `cuda_context=0` it falls back to the device's *primary* context, which cannot read a buffer allocated in a different context and fails the encode (`CUDA error invalid argument: Copying device buffer to VideoFrameResourceCuda`). `cuda_context=0` is only safe when the frames live in the primary context already, e.g. a plain `cudaMalloc` buffer or an ovrtx 0.5 render output mapped to CUDA.
+**For WebRTC/native, also pass `cuda_context`** — the producer's `CUcontext` as an int. This is **required** whenever the producer allocates frames in its own CUDA context, which Warp and most real renderers do. StreamSDK encodes from the device pointer through that context; with `cuda_context=0` it falls back to the device's *primary* context, which cannot read a buffer allocated in a different context and fails the encode (`CUDA error invalid argument: Copying device buffer to VideoFrameResourceCuda`). `cuda_context=0` is only safe when the frames live in the primary context already, e.g. a plain `cudaMalloc` buffer. An ovrtx 0.5 render output mapped to CUDA is readable that way only while ovrtx sees a single GPU (see below).
 
 ```python
 # Warp producer (own CUDA context): pass both.
@@ -84,6 +102,8 @@ cfg = ovstream.ServerConfig(width=W, height=H, cuda_device=0)
 ```
 
 Left at the default `-1`, `cuda_device` preserves each backend's prior behavior, so single-GPU apps need not set either field.
+
+**ovrtx on multi-GPU hosts.** With more than one GPU visible to ovrtx 0.5, a RenderProduct without an authored `deviceIds` is assigned to a GPU of ovrtx's choosing, and the mapped render var may then not be readable from the primary context of the device you pass as `cuda_device`: every backend rejects the frame (`cudaMemcpy2DAsync failed: invalid argument` from SHM, CUDASHM and RTSP; a connected client with no decodable video from WebRTC/native). ovrtx exposes no CUDA context for the mapping, so there is nothing to pass as `cuda_context`. Author `uint[] deviceIds = [<ordinal>]` on the RenderProduct and pass the same ordinal as `cuda_device` (the `ovrtx_stream` example does this with 0). If frames are still rejected, restrict the process to one GPU with `CUDA_VISIBLE_DEVICES=<ordinal>` and pass `cuda_device=0`, since the only exposed GPU is then runtime ordinal 0 whatever its physical index. This guidance will change if ovrtx starts exposing the mapping's context or allocates the output differently.
 
 ## Key Types / Functions
 

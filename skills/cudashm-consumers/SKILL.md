@@ -1,6 +1,25 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: cudashm-consumers
 description: Writing a CUDASHM reader/consumer that attaches to an ovstream CUDASHM producer over CUDA IPC. Use when user asks about consuming GPU-resident frames, reading from a CUDA IPC ring, writing a simulation/post-processing kernel that ingests rendered output, or running a consumer in a separate container.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - cudashm
+  - consumer
+  - cuda-ipc
+tools:
+  - Read
+  - Grep
 ---
 
 # CUDASHM Consumers
@@ -54,7 +73,7 @@ The C API surface (`type` is `OVSTREAM_CLIENT_CUDASHM`, with `config.cudashm.str
 - `ovstream_client_send_unicode(client, text)` — see [Reverse channel](#reverse-channel-driving-the-producer-from-the-consumer).
 - `ovstream_client_set_message_callback(client, cb, user_data)` — see [Reverse channel](#reverse-channel-driving-the-producer-from-the-consumer).
 
-The returned `ovstream_frame_t` carries `source == OVSTREAM_CLIENT_CUDASHM` and the imported device pointer in `frame.device_ptr`. Useful when writing a native simulator, a GPU post-processing pipeline, or any C/C++ consumer that already has a CUDA context and wants pixels delivered as device pointers. The `ovstream_client` shared library links the CUDA runtime (needed for `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`) and StreamSDK (for the NATIVE backend), but the CUDASHM transport itself uses neither StreamSDK nor GStreamer at runtime.
+The returned `ovstream_frame_t` carries `source == OVSTREAM_CLIENT_CUDASHM` and the imported device pointer in `frame.device_ptr`. Useful when writing a native simulator, a GPU post-processing pipeline, or any C/C++ consumer that already has a CUDA context and wants pixels delivered as device pointers. The `ovstream_client` shared library links the CUDA runtime (needed for `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`) and StreamSDK (for the NATIVE backend), but the CUDASHM transport itself uses neither StreamSDK nor GStreamer at runtime. `ovstream_shm_client` exports the same API without the native transport and links only the CUDA runtime; link it instead when the consumer process must not load StreamSDK.
 
 ## Reverse channel: driving the producer from the consumer
 
@@ -99,7 +118,7 @@ There is **no per-frame ACK** from consumer to producer; the producer never wait
 
 ## Resilience
 
-- If the producer is killed (clean exit or hard kill), `wait_frame` returns `None` and `is_alive` flips. Consumer should detect that and exit cleanly.
+- If the producer is killed (clean exit or hard kill), `wait_frame` returns `None` and `is_alive` flips. The consumer should detect that and close its client (or exit): on Windows the region's name stays taken while any consumer holds it, so a producer cannot restart on the same stream name until every consumer has closed.
 - If a consumer is killed, the producer's `on_connection(False)` fires shortly after.
 - Producer or consumer can start first; the other waits via attach-with-retry (see the viewer's `--retry-seconds` loop).
 
@@ -109,8 +128,8 @@ Pick any short ASCII string (max 63 bytes). The same name must be used on both s
 
 Cleanup: same as SHM. The producer unlinks its host-shared metadata region at clean shutdown; a hard-killed producer leaves the region behind:
 
-- Linux: `rm /dev/shm/ovstream-cuda-<stream_name>` if needed (the next producer `start()` with the same name unlinks any stale region before recreating).
-- Windows: the named file mapping is reference-counted by the kernel and closes when the last process exits.
+- Linux: `rm /dev/shm/ovstream-cuda-<stream_name>`; the next producer `start()` on that name fails until the file is gone.
+- Windows: the named file mapping is reference-counted by the kernel and disappears once every process that opened it has closed it, including consumers that outlived the producer; a producer cannot restart on the name while a consumer still holds it.
 
 The GPU memory of the ring buffers themselves is freed by the producer on `stop()`; consumers' `cudaIpcOpenMemHandle` imports are reference-counted by the CUDA driver and released cleanly on `destroy()`.
 

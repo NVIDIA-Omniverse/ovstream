@@ -1,6 +1,25 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: streaming-frames
 description: Submitting video frames to ovstream (raw CUDA BGRA8 or pre-encoded bitstreams). Use when user asks how to push frames, the video frame format, pitch alignment, or pre-encoded passthrough.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - frames
+  - cuda
+  - pre-encoded
+tools:
+  - Read
+  - Grep
 ---
 
 # Streaming Frames

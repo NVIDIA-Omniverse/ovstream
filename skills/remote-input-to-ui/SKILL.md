@@ -1,6 +1,25 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: remote-input-to-ui
 description: Routing browser input from ovstream to an ovui interface and a camera — the worker-thread hand-off, pointer routing by region, keyboard focus, injecting into ovui, and cursor forwarding. Use when user asks how to make a streamed ovui panel clickable, how to map ovstream key codes to ImGui keys, how to decide whether input goes to the UI or the scene, or how to forward the cursor shape.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - input
+  - ovui
+  - browser
+tools:
+  - Read
+  - Grep
 ---
 
 # Remote Input to an ovui Interface

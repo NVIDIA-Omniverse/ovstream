@@ -1,6 +1,26 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: webrtc-connection-diagnostics
 description: Diagnose ovstream WebRTC/native connection failures from logs. Use when a client can't connect, the stream is black, a connection times out, or you need to reason about STUN/TURN/ICE/NAT/firewall/container/cloud topology, signaling timeouts, or "what does this StreamSDK error code mean".
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - webrtc
+  - native
+  - diagnostics
+  - ice
+tools:
+  - Read
+  - Grep
 ---
 
 # WebRTC Connection Diagnostics
@@ -16,8 +36,9 @@ The authoritative reference is **`docs/WEBRTC_CONNECTIVITY.md`** — it carries
 the full scenario matrix, the StreamSDK hex-error table, the key-log-message
 table, and the multi-machine procedures. The machine-readable catalog is
 **`tests/webrtc_net/scenarios.toml`** (each entry's `id`, `expect_logs`,
-`diagnosis`, `fix`). Read both when diagnosing; this skill is the workflow that
-ties them together.
+`diagnosis`, `fix`) in the ovstream source repository; the `tests/` tree is
+not published with the SDK. Read both when diagnosing; this skill is the
+workflow that ties them together.
 
 ## Step 1 — capture logs at the right level
 

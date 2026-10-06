@@ -14,8 +14,10 @@ its affiliates is strictly prohibited.
 This document is the ovstream SDK's self-contained reference for diagnosing
 WebRTC/native connection behaviour across network topologies. It is the
 human-readable companion to the machine-readable scenario catalog
-(`tests/webrtc_net/scenarios.toml`) and the source of truth for the
-`webrtc-connection-diagnostics` skill.
+(`tests/webrtc_net/scenarios.toml` in the ovstream source repository; the
+`tests/` tree, the connection probe and the server harness referenced below are
+development tools and are not published with the SDK) and the source of truth
+for the `webrtc-connection-diagnostics` skill.
 
 ovstream's WebRTC/native backend is built on NVIDIA StreamSDK (the same
 streaming stack behind GeForce NOW). It uses StreamSDK's signaling and ICE,
@@ -40,7 +42,15 @@ Two transport pieces matter for every scenario:
   negotiate the session.
 - **Media/stream port** — UDP (default `47998`, set via
   `ServerConfig.stream_port`). Encoded video/audio flows here. WebRTC ICE may
-  also use additional dynamic UDP ports beyond this one.
+  also use additional dynamic UDP ports beyond this one. The port is bound
+  when a client connects, not at `start()`; if another server holds it by
+  then, StreamSDK binds an OS-assigned port and ICE advertises that one. With
+  `webrtc_public_ip` set, ICE is off and clients are told to reach the
+  configured port regardless, so every WebRTC server on the host must then
+  have its own `stream_port`.
+  Native servers bind `stream_port` as well (default `47999`); one whose port
+  is taken falls back to an OS-assigned port, which its clients learn through
+  the handshake.
 
 ---
 
@@ -180,6 +190,21 @@ notes lines you may additionally see that are not auto-asserted.
 > dummy-interface address — hence root is required.) The native
 > `ovstream_webrtc_probe` cannot exercise relay and does not attempt it.
 
+> **The server always needs a UDP path to the relay or the client.** Because
+> the server never allocates a relay, TURN over TCP or TLS carries only the
+> *client's* leg: the browser talks to the TURN server over TCP, and the TURN
+> server forwards the media to the ovstream server over UDP from the
+> allocation's relayed port. A deployment that blocks UDP at the server's
+> public edge therefore streams by running the TURN relay (or a media proxy)
+> inside that edge, so the relay reaches the server over UDP internally — the
+> usual shape for servers that expose no public UDP at all. What cannot work
+> is a server process with no UDP path to anything: its log shows hole-punch
+> pings toward the client's relayed address on the TURN host failing, and no
+> TCP traffic to the TURN server, because the server never opens a TURN
+> allocation itself. `transport_policy: RELAY` restricts which candidate
+> pairs the server accepts; it does not make the server contact the TURN
+> server.
+
 ### nat-full-cone-stun
 
 - **Topology:** Server behind a cone NAT (`MASQUERADE`); public client with a
@@ -231,19 +256,26 @@ notes lines you may additionally see that are not auto-asserted.
   reflexive candidate and direct media has no path, leaving no usable candidate
   pair. Signaling (TCP) still completes, so this presents as "connects but no
   media".
-- **Fix:** Open the UDP media range, or use a TURN server offering a TCP/TLS
-  transport (`turns:...?transport=tcp`) — next.
+- **Fix:** Give the server a UDP path: open the UDP media range, or place a
+  TURN relay or media proxy inside the server's network so it reaches the
+  server over UDP internally (see the note above). When it is the *client*
+  whose UDP is blocked, a TURN server offering a TCP/TLS transport
+  (`turn:...?transport=tcp`, `turns:...`) carries the client's leg over TCP —
+  next.
 
 ### blocked-udp-turn-tcp
 
 - **Topology:** Browser forced relay-only against a coturn TURN server over TCP
-  (`turn:...?transport=tcp`) — reproducing a UDP-hostile path where media must
-  relay over TCP. Exercised via the **browser lane** (see the note above).
+  (`turn:...?transport=tcp`) — reproducing a UDP-hostile path on the *client*
+  side, where the client's media must relay over TCP. The server keeps UDP
+  reachability to the TURN server. Exercised via the **browser lane** (see the
+  note above).
 - **Expected:** connect via a `relay` candidate; server logs `Client connected
   to WebRTC server`.
-- **Diagnosis:** When direct UDP is impossible, a TURN server reachable over
-  TCP/TLS relays the media. The browser allocates the relay over TCP; the
-  ICE-lite server forwards its TURN config to the browser.
+- **Diagnosis:** When the client has no UDP path, a TURN server reachable over
+  TCP/TLS relays its media. The browser allocates the relay over TCP, the TURN
+  server reaches the ovstream server over UDP, and the ICE-lite server only
+  forwards its TURN config to the browser.
 
 ### server-forced-relay
 
@@ -263,9 +295,9 @@ notes lines you may additionally see that are not auto-asserted.
   it is applied (before or after `start()`), and needs at least one `turn:`
   entry to relay through.
 - **Fix:** Pass `transport_policy: RELAY` with a reachable `turn:` entry to
-  `set_webrtc_ice_servers` before the client connects. Without a TURN
-  server, `RELAY` leaves no usable candidate pair and the stream never
-  connects.
+  `set_webrtc_ice_servers` before the client connects. `RELAY` requires at
+  least one `turn:` / `turns:` entry; `set_webrtc_ice_servers` rejects the
+  call otherwise.
 - **Not exercised here:** the per-server `turn_type` (relay operator) and the
   `remote_address` / `remote_port` fields of the ICE configuration are only
   meaningful against the corresponding cloud infrastructure; the lab validates
@@ -359,6 +391,7 @@ are protocol-level and identical regardless of how ovstream is embedded.
 | `0x800b1000` | `NVST_R_INVALID_STATE` | Component not in the correct state (e.g. sending a message before connected) |
 | `0x800B1002` | `NVST_R_INTERNAL_ERROR` | Unexpected internal server error (encoder conflict, GPU issue, other) |
 | `0x800E840C` | `NVST_DISCONN_SERVER_VIDEO_ENCODER_INIT_CUDA_ENCODE_OPEN_FAILED` | NVENC initialization failed |
+| `0x800E8504` | `NVST_DISCONN_SERVER_VIDEO_ADAPTER_INITIALIZE_D3D_FAILED` | Windows only: the process is not in a logged-on user's session (service, SYSTEM task, SSH shell), so StreamSDK cannot create its Direct3D adapter context. Run the server in the console session. |
 | `0x8003000F` | `NVST_DISCONN_SERVER_TERMINATED_FRAME_GRAB_FAILED` | Frame timeout — no frame delivered within the timeout |
 | `0xC0F22219` | `StreamerNoOffer` (client-side) | Client never received the WebRTC offer — signaling timeout |
 | `0xC0F2220F` | Ragnarok connection error (client-side) | Check browser WebRTC policy (`WebRtcIPHandling`) |

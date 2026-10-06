@@ -8,7 +8,7 @@
 # without an express license agreement from NVIDIA CORPORATION or
 # its affiliates is strictly prohibited.
 
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.24)
 project(pre_encoded_stream LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)

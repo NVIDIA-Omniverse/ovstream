@@ -253,8 +253,28 @@ OVSTREAM_API ovstream_result_t ovstream_stop(ovstream_server_t* server);
 // CUDASHM). Every backend stages or copies the frame data into
 // server-owned memory before returning, so the caller-supplied
 // `frame.buffer` can be reused or freed as soon as this call
-// returns. See `ovstream_video_frame_t` for the full lifetime
-// contract.
+// returns, with one exception: on a WebRTC/native stream started
+// with `webrtc.resizable` the encoder reads the buffer after the
+// call returns, so stream from a persistent allocation and rotate
+// buffers rather than rewriting the one just submitted. See
+// `ovstream_video_frame_t` for the full lifetime contract.
+//
+// On WebRTC, native and RTSP servers, frames submitted while no
+// client is connected are dropped and the call succeeds, so a
+// producer streams at its own rate regardless of connection state.
+// RTSP also drops frames between a client connecting and its media
+// being configured, which follows the connection callback. Once a
+// client is connected, WebRTC and native wait briefly for its video
+// stream and report `OVSTREAM_API_ERROR` if it does not come up. SHM
+// and CUDASHM publish every frame whether or not a reader is attached.
+//
+// A WebRTC or native connection whose producer submits no frame for
+// 7000 ms (StreamSDK's default) is closed by StreamSDK. The server
+// stays started and accepts a new connection; resuming submission
+// does not revive the closed one. A producer that can stall for
+// seconds should re-submit its last frame periodically during the
+// stall, or raise the timeout with StreamSDK's `SenderTimeout`
+// environment variable (milliseconds).
 //
 // If `frame.sync.wait_event` is set, SHM chains its device-to-host
 // memcpy via `cudaStreamWaitEvent` (no host block). If only
@@ -309,9 +329,12 @@ OVSTREAM_API ovstream_result_t ovstream_stream_video(ovstream_server_t* server,
 // `bits_per_sample != 16` are rejected. Same buffer lifetime
 // contract as `ovstream_stream_video`: samples are staged into
 // server-owned memory before the call returns, so the caller may
-// reuse or free `frame.buffer` immediately after return. A server
-// started with `webrtc.audio_capture` streams the host's audio
-// output itself and rejects pushed frames with NOT_SUPPORTED.
+// reuse or free `frame.buffer` immediately after return. As for
+// video, frames submitted while no client is connected are dropped
+// and the call succeeds; once a client is connected the audio stream
+// must come up within the wait window below. A server started with
+// `webrtc.audio_capture` streams the host's audio output itself and
+// rejects pushed frames with NOT_SUPPORTED.
 //
 // @par Thread-Safety
 // Same contract as `ovstream_stream_video`.
@@ -322,9 +345,10 @@ OVSTREAM_API ovstream_result_t ovstream_stream_video(ovstream_server_t* server,
 // @return
 //   - `OVSTREAM_API_SUCCESS` on success.
 //   - `OVSTREAM_API_INVALID_ARGUMENT` if `server` / `frame` /
-//     `frame.buffer` is NULL or `bits_per_sample != 16`.
+//     `frame.buffer` is NULL, `channels` or `sample_rate` is zero,
+//     or `bits_per_sample != 16`.
 //   - `OVSTREAM_API_INVALID_STATE` if the server has not been
-//     started or no client is connected yet.
+//     started.
 //   - `OVSTREAM_API_TIMEOUT` if the WebRTC audio stream is not yet
 //     connected and doesn't connect within the internal wait window
 //     (~200 ms); the frame is dropped.
@@ -340,8 +364,10 @@ OVSTREAM_API ovstream_result_t ovstream_stream_audio(ovstream_server_t* server,
 //--------------------------------------------------------------
 // @brief Check whether at least one client is currently connected.
 //
-// For RTSP servers (which support multiple concurrent clients),
-// `*out_connected` is set to true if any client is connected.
+// A WebRTC or native server carries one client connection at a time;
+// further viewers need further servers. For RTSP servers (which
+// support multiple concurrent clients), `*out_connected` is set to
+// true if any client is connected.
 //
 // @param server        The server handle.
 // @param out_connected [out] Receives the connection state. Never
@@ -560,9 +586,12 @@ OVSTREAM_API ovstream_result_t ovstream_set_unicode_callback(ovstream_server_t* 
 // chunk metadata (the client's `id` / `part` / `numParts` fields)
 // sits inside the delivered payload itself alongside its other
 // fields, so each part is self-describing; reassembly is up to
-// the application. `ovstream_send_app_message` is the outbound
-// counterpart. See `ovstream_set_connection_callback` for
-// thread-safety and registration semantics.
+// the application. The first app message can arrive several
+// hundred milliseconds before the connection callback reports the
+// client connected; replying from the callback is supported.
+// `ovstream_send_app_message` is the outbound counterpart. See
+// `ovstream_set_connection_callback` for thread-safety and
+// registration semantics.
 //
 // @param server    The server handle.
 // @param callback  Callback to invoke for each app-addressed
@@ -652,7 +681,10 @@ OVSTREAM_API ovstream_result_t ovstream_set_clipboard_callback(ovstream_server_t
 //
 // Fires on WebRTC and native servers with the HTTP headers a client
 // sent with its signaling connection request; the return value
-// accepts or rejects the connection. The SDK never inspects header
+// accepts or rejects the connection. A rejected client receives no
+// offer and no HTTP error: StreamSDK closes its signaling socket
+// when the heartbeat times out (about 20 s), and the bundled browser
+// client reports `StreamerNoOffer`. The SDK never inspects header
 // values itself. With no callback registered every connection is
 // accepted. Registration succeeds on other backends but the callback
 // never fires there. See `ovstream_set_connection_callback` for

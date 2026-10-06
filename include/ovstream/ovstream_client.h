@@ -39,6 +39,12 @@
 // NvStreamingMedia (NVDEC on NVIDIA GPUs) and delivering BGRA8 directly, so the
 // NATIVE transport requires an NVIDIA GPU + CUDA on the consumer.
 //
+// The `ovstream_shm_client` library exports this same API built without the
+// NATIVE transport: it links only the CUDA runtime and carries no StreamSDK,
+// and `ovstream_create_client(OVSTREAM_CLIENT_NATIVE, ...)` returns
+// `OVSTREAM_API_NOT_SUPPORTED`. Consumers that only attach to SHM / CUDASHM
+// producers can load it in place of `ovstream_client`.
+//
 #pragma once
 
 #include <ovstream/ovstream_types.h>
@@ -163,8 +169,9 @@ typedef struct
         // Server address (IPv4 dotted-quad or hostname). Input-string contract;
         // empty view is rejected.
         ovstream_string_t server_ip;
-        // Media transport (streaming) port. 0 uses the native default (47999),
-        // matching the server's `ovstream_server_config_t::stream_port` default.
+        // Media transport (streaming) port. Accepted for compatibility and
+        // unused: the native transport negotiates its media ports over the
+        // signaling handshake.
         uint16_t          stream_port;
         // Signaling (TCP) port. 0 uses the default (49100), matching the
         // server's `webrtc.signal_port` default.

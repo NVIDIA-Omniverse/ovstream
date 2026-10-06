@@ -1,6 +1,25 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: frame-generation-streaming
 description: Streaming DLSS Frame Generation output from ovrtx through ovstream — enabling it on the RenderProduct, classifying the frames each step returns, pacing generated frames into the delivered rate, detecting whether it engaged, and what to report. Use when user asks how to stream frame generation, why the stream shows 30 fps with generation on, how many frames a render step returns, or why generation did not engage.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - ovrtx
+  - dlss
+  - frame-generation
+tools:
+  - Read
+  - Grep
 ---
 
 # Streaming Frame Generation

@@ -119,4 +119,6 @@ python python/basic_stream/main.py cudashm:demo
 python python/local_stream/main_cudashm_viewer.py demo
 ```
 
+Beyond `pip install ovstream`, `warp_stream` needs `warp-lang` and the viewers need `opencv-python` (the CUDASHM viewer also `numpy`); each script declares its dependencies in its header, so `uv run <script>` installs them for you.
+
 `pre_encoded_stream` (RTSP only) and `local_stream` (SHM only) are transport-specific by design and use their own positional-arg shapes — see each example's README.

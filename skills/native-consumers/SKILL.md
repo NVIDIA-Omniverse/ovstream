@@ -1,6 +1,25 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+#
+# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
+# property and proprietary rights in and to this material, related
+# documentation and any modifications thereto. Any use, reproduction,
+# disclosure or distribution of this material and related documentation
+# without an express license agreement from NVIDIA CORPORATION or
+# its affiliates is strictly prohibited.
 name: native-consumers
 description: Writing a native (StreamSDK) reader/consumer that attaches to an ovstream NATIVE server over the network. Use when user asks about consuming a native stream, writing a StreamSDK client viewer, decoding frames client-side via NvStreamingMedia, or streaming between two different machines.
+license: LicenseRef-NvidiaProprietary
+author: NVIDIA ovstream
+tags:
+  - ovstream
+  - native
+  - consumer
+  - streamsdk
+tools:
+  - Read
+  - Grep
 ---
 
 # Native Consumers
@@ -28,7 +47,7 @@ with ovstream.Client(ovstream.ClientType.NATIVE, server_ip="10.0.0.5") as client
         # ... process ...
 ```
 
-The config is connection parameters, not a stream name: `server_ip` (required), `signal_port` (default `49100`), `stream_port` (default `47999`), and `cuda_device` (default `-1` = device 0, the GPU the client decodes / converts on). Ports are validated to `0..65535` (a `ValueError` is raised otherwise).
+The config is connection parameters, not a stream name: `server_ip` (required), `signal_port` (default `49100`), `stream_port` (accepted for compatibility and unused; media ports are negotiated over the signaling handshake), and `cuda_device` (default `-1` = device 0, the GPU the client decodes / converts on). Ports are validated to `0..65535` (a `ValueError` is raised otherwise).
 
 `wait_frame(timeout_ms=...)` blocks up to the timeout, returning `None` on timeout or when no new frame has arrived. `is_alive()` flips to `False` when the StreamSDK connection drops. The returned `ovstream.Frame` has `frame.source == ovstream.ClientType.NATIVE`, and the pixels are host-resident (`frame.data` / `frame.as_numpy()` / `frame.as_buffer()`), `frame.pitch_bytes` is the row stride, and `frame.sequence` is a monotonic counter. The same reverse-channel `send_message` / `send_input_event` / `send_unicode` / `on_message` API is available — the producer's regular callbacks fire for native events too.
 
@@ -103,7 +122,7 @@ C:
 
 - **Consumer needs an NVIDIA GPU + driver.** The decode runs through StreamSDK's NvStreamingMedia, which uses NVDEC on NVIDIA GPUs, so a machine with no NVIDIA GPU can't be a native consumer. This is the cost of lifting the same-host / same-GPU constraint of SHM / CUDASHM.
 - **Connect is synchronous and fails fast.** Start the producer first, or use a retry-on-connect loop (the examples do). A consumer started before its producer otherwise fails immediately.
-- **Ports must match the server.** `signal_port` (default `49100`) and `stream_port` (default `47999`) must match what the producer was started with. Both must be reachable across the network / firewall.
+- **`signal_port` must match the server.** `signal_port` (default `49100`) must match what the producer was started with and be reachable across the network / firewall, as must the server's media port (its `stream_port`, default UDP `47999`). `stream_port` is accepted for compatibility and unused: media ports are negotiated over the signaling handshake.
 - **No gamepad input.** Keyboard, mouse, and unicode forward to the producer; gamepad does not on the native path.
 - **Message / unicode payloads cap at 65535 bytes.** The StreamSDK custom-message limit. Chunk larger payloads at the application layer.
 - **No browser viewer.** Native requires a StreamSDK client (the `native_client` examples, or your own). To reach a browser, run a WebRTC server alongside the native one.

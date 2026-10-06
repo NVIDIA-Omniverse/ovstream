@@ -50,7 +50,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MAIN = HERE.parent / "main.py"
 CLIENT_DIR = HERE.parents[2] / "webrtc_client"                     # sdk/examples/webrtc_client
-PLAYWRIGHT = HERE.parents[3] / "tests" / "webrtc_net" / "browser" / "playwright_client.py"
+PLAYWRIGHT = CLIENT_DIR / "playwright_client.py"
 
 sys.path.insert(0, str(HERE))
 from qualify_fg import GpuSampler  # noqa: E402  (same directory)
@@ -66,8 +66,10 @@ VARIANTS = [
     ("stream-30hz",    ["--marker", "--fg", "off", "--output-hz", "30", "webrtc"], True),
     # Experimental zero-copy path (stream from the mapped ovrtx output), for comparison
     # against the copy path above; not part of the default set.
-    ("stream-fg-off-zc", ["--marker", "--fg", "off", "--zero-copy", "webrtc"], True),
-    ("stream-fg-on-zc",  ["--marker", "--fg", "on", "--zero-copy", "webrtc"], True),
+    # --zero-copy works in place on the renderer's output and cannot carry
+    # the UI, so these variants run headless.
+    ("stream-fg-off-zc", ["--no-ui", "--marker", "--fg", "off", "--zero-copy", "webrtc"], True),
+    ("stream-fg-on-zc",  ["--no-ui", "--marker", "--fg", "on", "--zero-copy", "webrtc"], True),
 ]
 DEFAULT_VARIANTS = ["renderer", "renderer+ui", "stream-fg-off", "stream-fg-on", "stream-30hz"]
 ECHOES = 20

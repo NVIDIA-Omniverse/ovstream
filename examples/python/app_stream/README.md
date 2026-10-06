@@ -43,7 +43,7 @@ Useful options: `--fg auto|on|off` (default `auto`), `--fg-interpolated N` (inte
 
 The WebRTC path forwards pixels only, so `--marker` writes the identity of every delivered frame into the frame itself: three rows of 32 black-or-white cells in the bottom-left corner (`marker.py`), carrying the frame id, the scene ordinal whose render produced the image, the frame class (simulated, interpolated, repeat) and the last pointer position the render submit for that ordinal consumed, guarded by a checksum. Generated frames carry the ordinal of the simulated frame they lead to.
 
-A client that reads the marker from its decoded video can count unique frames per class, measure delivery intervals, and time input against the render that saw it: it moves the pointer to a unique position, timestamps the move, and waits for the first frame whose marker echoes that position. A queued or repeated older image can never be counted as the response. `tests/webrtc_net/browser/playwright_client.py --marker-capture S --marker-echo N` does exactly this in Chrome; the SHM tests read the same marker with the Python decoder.
+A client that reads the marker from its decoded video can count unique frames per class, measure delivery intervals, and time input against the render that saw it: it moves the pointer to a unique position, timestamps the move, and waits for the first frame whose marker echoes that position. A queued or repeated older image can never be counted as the response. `examples/webrtc_client/playwright_client.py --marker-capture S --marker-echo N` does exactly this in Chrome; the SHM tests read the same marker with the Python decoder.
 
 With frame generation on, the first frame to echo an input is normally the interpolated frame that leads to the simulated one (both carry the parent's ordinal), so the client reports two latencies: to the first echo and to the simulated frame. The numbers are in the comparison below.
 
@@ -98,11 +98,11 @@ Frame generation engaged on this GPU although nvidia-smi reports no active displ
 - **Many missed steps, delivered rate below target.** The renderer cannot hold the base rate at this resolution; the loop keeps presenting the last frame. Lower `--size`, drop `--output-hz` to 60, or turn generation on so the base rate halves. On a laptop, check `nvidia-smi -q -d PERFORMANCE` for power or thermal capping first; `tools/qualify_fg.py` records the clock range for that reason.
 - **Black or blue-tinted video.** Blue tint means RGBA reached the encoder; every frame goes through the swizzle here, so it points at a modified pipeline. Black video with a connected client usually means the encoder is on a different GPU from the frames; pass `--cuda-device` matching the render GPU.
 - **`omni.ui` import fails on Windows.** The ovui wheel needs its `omni/ui_scene` directory and a CUDA 12 runtime DLL on the search path; `ui/host.py` adds both from the active environment. Run `--no-ui` to confirm the rest of the stack.
-- **Browser connects but never shows video.** On a resizable stream that is the memory-pool failure above (the encoder tears down after the first frames). Otherwise use `tests/webrtc_net/browser/playwright_client.py --headed` to watch the client and `--app-stream-check` to confirm state messages flow.
+- **Browser connects but never shows video.** On a resizable stream that is the memory-pool failure above (the encoder tears down after the first frames). Otherwise use `examples/webrtc_client/playwright_client.py --headed` to watch the client and `--app-stream-check` to confirm state messages flow.
 
 ### Zero-copy experiment
 
-`--zero-copy` (experimental) skips the device copy: the mapped ovrtx output is converted and composited in place and streamed directly, with the mapping held until `stream_video` returns. Measured against the copy path in a paired run (same conditions as above, warm GPU, so absolute numbers are a little worse than the table):
+`--zero-copy` (experimental) skips the device copy: the mapped ovrtx output is converted and composited in place and streamed directly, with the mapping held until `stream_video` returns. It works on the renderer's output, so it runs with `--no-ui` and without `--resizable`; `tools/compare.py --variants stream-fg-off-zc,stream-fg-on-zc` runs it that way. Measured against the copy path in a paired run (same conditions as above, warm GPU, so absolute numbers are a little worse than the table):
 
 | | copy path | zero-copy |
 |---|---|---|
@@ -126,6 +126,7 @@ The 1080p device copy costs about 0.1 ms of GPU time and 0.15 ms of CPU issue ti
 - The ovui standalone backend writes an `imgui.ini` in the working directory.
 - The exported ovui image is opaque, so the chrome cannot be blended over the scene; the viewport is a region of the frame the scene fills exactly.
 - The browser page shows the state messages in its console only; it has no controls of its own yet.
+- RTSP is fixed-size. With `--resizable` and an RTSP server in the same run, RTSP rejects every frame after the first resize and resumes only when the frame returns to the configured size; the other transports keep streaming.
 - On a resizable WebRTC stream the transport gives no completion signal for a submitted frame. A ring slot is owned until `stream_video` has returned for every server, which is exact for fixed-size streams (the SDK stages the frame) but only a heuristic for resizable ones, where the four-slot ring depth is what protects a released slot. A per-frame completion signal is SDK work; until it exists `--zero-copy` is refused together with `--resizable`.
 
 ## Layout

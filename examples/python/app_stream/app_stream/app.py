@@ -152,7 +152,7 @@ class App:
             size = payload["size"]
             try:
                 w, h = int(size[0]), int(size[1])
-            except (TypeError, ValueError, IndexError, KeyError):
+            except (TypeError, ValueError, IndexError, KeyError, OverflowError):
                 return
             self.resize.request(w, h, time.monotonic())
 

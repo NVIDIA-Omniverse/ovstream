@@ -12,7 +12,7 @@
 # /// script
 # requires-python = ">=3.8"
 # dependencies = [
-#     "ovstream",
+#     "ovstream>=0.5.5",
 #     "opencv-python",
 #     "numpy",
 # ]
