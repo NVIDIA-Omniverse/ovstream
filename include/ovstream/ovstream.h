@@ -263,10 +263,10 @@ OVSTREAM_API ovstream_result_t ovstream_stop(ovstream_server_t* server);
 // client is connected are dropped and the call succeeds, so a
 // producer streams at its own rate regardless of connection state.
 // RTSP also drops frames between a client connecting and its media
-// being configured, which follows the connection callback. Once a
-// client is connected, WebRTC and native wait briefly for its video
-// stream and report `OVSTREAM_API_ERROR` if it does not come up. SHM
-// and CUDASHM publish every frame whether or not a reader is attached.
+// being configured, which follows the connection callback. WebRTC and
+// native likewise drop frames submitted while a connected client's
+// video stream is coming up or has already been torn down. SHM and
+// CUDASHM publish every frame whether or not a reader is attached.
 //
 // A WebRTC or native connection whose producer submits no frame for
 // 7000 ms (StreamSDK's default) is closed by StreamSDK. The server
@@ -330,9 +330,9 @@ OVSTREAM_API ovstream_result_t ovstream_stream_video(ovstream_server_t* server,
 // contract as `ovstream_stream_video`: samples are staged into
 // server-owned memory before the call returns, so the caller may
 // reuse or free `frame.buffer` immediately after return. As for
-// video, frames submitted while no client is connected are dropped
-// and the call succeeds; once a client is connected the audio stream
-// must come up within the wait window below. A server started with
+// video, frames submitted while no client is connected, or while the
+// client's audio stream is not connected, are dropped and the call
+// succeeds. A server started with
 // `webrtc.audio_capture` streams the host's audio output itself and
 // rejects pushed frames with NOT_SUPPORTED.
 //
@@ -349,9 +349,6 @@ OVSTREAM_API ovstream_result_t ovstream_stream_video(ovstream_server_t* server,
 //     or `bits_per_sample != 16`.
 //   - `OVSTREAM_API_INVALID_STATE` if the server has not been
 //     started.
-//   - `OVSTREAM_API_TIMEOUT` if the WebRTC audio stream is not yet
-//     connected and doesn't connect within the internal wait window
-//     (~200 ms); the frame is dropped.
 //   - `OVSTREAM_API_NOT_SUPPORTED` on RTSP and SHM servers, and on
 //     WebRTC/native servers started with `webrtc.audio_capture`.
 //   - `OVSTREAM_API_ERROR` if the StreamSDK submit fails.

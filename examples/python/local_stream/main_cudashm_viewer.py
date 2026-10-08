@@ -58,6 +58,11 @@ import sys
 import time
 from pathlib import Path
 
+# ovstream is imported before OpenCV: both load a library named
+# libglib-2.0.so.0, a process keeps the first one, and the system copy
+# OpenCV may link is too old for the GLib ovstream bundles.
+import ovstream
+
 try:
     import cv2
 except ImportError:
@@ -70,7 +75,6 @@ except ImportError:
     sys.stderr.write("This example requires numpy. Install with:  pip install numpy\n")
     sys.exit(1)
 
-import ovstream
 import ovstream._bindings as _b
 
 
@@ -201,7 +205,7 @@ def main():
         while client.is_alive():
             frame = client.wait_frame(timeout_ms=500)
             if frame is None:
-                if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
+                if _window_closed(window):
                     break
                 continue
 
@@ -217,7 +221,7 @@ def main():
                 if key == ord("q") or key == 27:
                     break
                 _forward_key(client, key)
-            if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
+            if _window_closed(window):
                 break
 
         if not client.is_alive():
@@ -288,6 +292,15 @@ def _make_mouse_callback(client, dims):
             ))
 
     return on_mouse
+
+
+def _window_closed(window: str) -> bool:
+    # OpenCV 5's Qt backend raises once the window is gone instead of
+    # reporting it as not visible.
+    try:
+        return cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1
+    except cv2.error:
+        return True
 
 
 def _forward_key(client, key_code: int) -> None:

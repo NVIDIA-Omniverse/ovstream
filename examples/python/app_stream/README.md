@@ -128,6 +128,7 @@ The 1080p device copy costs about 0.1 ms of GPU time and 0.15 ms of CPU issue ti
 - The browser page shows the state messages in its console only; it has no controls of its own yet.
 - RTSP is fixed-size. With `--resizable` and an RTSP server in the same run, RTSP rejects every frame after the first resize and resumes only when the frame returns to the configured size; the other transports keep streaming.
 - On a resizable WebRTC stream the transport gives no completion signal for a submitted frame. A ring slot is owned until `stream_video` has returned for every server, which is exact for fixed-size streams (the SDK stages the frame) but only a heuristic for resizable ones, where the four-slot ring depth is what protects a released slot. A per-frame completion signal is SDK work; until it exists `--zero-copy` is refused together with `--resizable`.
+- `webrtc` and `native` in the same run share one StreamSDK adapter context (every server is pinned to the same GPU and context, see "WebRTC and native in one process" in `docs/ARCHITECTURE.md`); the first client to disconnect tears it down and the other transport faults. Run the two from separate processes; the `cuda_device=-1` alternative does not apply here because the frames live in Warp's own context.
 
 ## Layout
 

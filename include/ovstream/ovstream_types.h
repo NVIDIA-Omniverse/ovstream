@@ -22,7 +22,7 @@
 //--------------------------------------------------------------
 #define OVSTREAM_VERSION_MAJOR 0
 #define OVSTREAM_VERSION_MINOR 5
-#define OVSTREAM_VERSION_PATCH 5
+#define OVSTREAM_VERSION_PATCH 6
 
 //--------------------------------------------------------------
 // @brief Mark a public entry point, type, or field as deprecated.
@@ -875,7 +875,7 @@ typedef struct
     uint16_t                stream_port;  // Media transport port (0 = default: 8554 RTSP, 47998 WebRTC, 47999 native; ignored for SHM and CUDASHM).
                                           // A native server whose port is taken falls back to an OS-assigned port, which its clients learn through the handshake.
     ovstream_video_input_t  video_input;  // See ovstream_video_input_t. Must be CUDA or TENSOR for SHM and CUDASHM.
-    int32_t                 cuda_device;  // GPU ordinal for raw-CUDA input. Any negative value uses the backend default (-1 by convention; WebRTC/native display adapter, SHM/CUDASHM the calling thread's current device). Set to the producer's device on multi-GPU hosts.
+    int32_t                 cuda_device;  // GPU ordinal for raw-CUDA input. Any negative value uses the backend default (-1 by convention; WebRTC/native display adapter, SHM/CUDASHM the calling thread's current device). Set to the producer's device on multi-GPU hosts. Do not run a WebRTC server and a native server pinned to the same GPU in one process: StreamSDK shares one adapter context per GPU and tears it down when the first session ends, faulting the other server. Run such a pair in separate processes (primary-context producers on a single-GPU host can instead leave this at -1).
     uintptr_t               cuda_context; // Producer's CUcontext (cast to uintptr_t) paired with cuda_device. WebRTC/native only; ignored when cuda_device < 0. REQUIRED if the producer allocates frames in its own context (Warp, ovrtx, most renderers); 0 is only safe when frames live in the device's primary context (e.g. plain cudaMalloc).
 
     // WebRTC/native-specific (ignored for RTSP, SHM, and CUDASHM).
@@ -888,7 +888,7 @@ typedef struct
                                          // and report it via the "resize request" callback.
         bool              audio_capture; // Automatically capture and stream ALL host audio.
                                          // `ovstream_stream_audio` returns NOT_SUPPORTED.
-        bool              event_tracing; // StreamSDK event tracing (ETL) for diagnostics.
+        bool              event_tracing; // StreamSDK event tracing for diagnostics; one .etli file per session in the working directory. On Linux, tracing works for one server per process (StreamSDK limitation).
         ovstream_string_t public_ip;     // Fixed public IP (disables ICE when non-empty).
                                          // Input-string contract; empty view = ICE enabled.
     } webrtc;

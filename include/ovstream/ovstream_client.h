@@ -361,9 +361,12 @@ OVSTREAM_CLIENT_API ovstream_result_t ovstream_client_get_producer_device(
 // `ovstream_set_input_callback` for any other transport, so producer code does
 // not change between transports. SHM/CUDASHM encode events on the control
 // channel; NATIVE pushes them through the StreamSDK input stream.
-// NATIVE forwards SHIFT, CONTROL, ALT, and SUPER modifier bits; CAPS_LOCK
-// and NUM_LOCK are omitted because StreamSDK's event flags cannot carry
-// lock state. SHM/CUDASHM preserve the full modifier mask.
+// NATIVE forwards SHIFT, CONTROL, ALT, and SUPER modifier bits on keyboard
+// events; CAPS_LOCK and NUM_LOCK are omitted because StreamSDK's event
+// flags cannot carry lock state, and StreamSDK does not transmit the
+// modifier bits of mouse events, so a mouse event arrives with the
+// modifier keys currently held (sent as keyboard events) and nothing else.
+// SHM/CUDASHM preserve the full modifier mask on every event.
 //
 // @par Thread-Safety
 // Safe to call concurrently from any thread.

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-10-07
+### Fixed
+- RTSP: raw-CUDA frames dropped while every staging buffer was held downstream were not counted or logged.
+- WebRTC/native: on Linux, event tracing wrote no trace for a server that was the only one in the process.
+- WebRTC/native: frames submitted while a client was disconnecting failed (instead of being dropped).
+- Native client: mouse events documented as carrying modifier bits that StreamSDK does not transmit.
+- Examples: OpenCV viewers raised on exit when the window was closed with OpenCV 5.
+- Examples: viewers importing OpenCV before `ovstream` failed to import on Linux.
+
 ## [0.5.5] - 2026-10-01
 ### Added
 - Examples: `webrtc_client/playwright_client.py`, a headless browser client for automation.

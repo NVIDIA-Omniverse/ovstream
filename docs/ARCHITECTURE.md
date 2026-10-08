@@ -138,10 +138,11 @@ API. It does not reach into the internals; it is purely a consumer.
 The wheel is self-contained: the native libraries (`ovstream.dll` or
 `libovstream.so`, plus GStreamer, StreamSDK and the CUDA runtime) are
 bundled alongside the Python package, so `pip install ovstream` works
-with no `PATH` / `LD_LIBRARY_PATH` tweaks. Those bundled runtimes are
-shared with any other library in the process that uses the same ones;
-see "One GStreamer and one CUDA runtime per process" under Common
-gotchas.
+with no `PATH` / `LD_LIBRARY_PATH` tweaks. GStreamer and GLib are loaded
+by name, so the process keeps whichever copy loaded first and every
+library in it shares that copy; the CUDA runtime is loaded by path, so
+another library that bundles its own keeps its own. See "Shared GStreamer,
+separate CUDA runtimes" under Common gotchas.
 
 Callbacks run on the SDK's threads. An exception raised inside
 `on_signaling_headers` rejects that connection; an exception raised
@@ -315,14 +316,17 @@ definition.
   VideoFrameResourceCuda`. `0` is safe only when the frames already live
   in the primary context (plain `cudaMalloc`). The device-match check
   above does not catch this — the device matches; the context doesn't.
-- A WebRTC server and a native server in one process must not share a
-  CUDA context. StreamSDK uses one adapter context for the two
-  sessions when both are created with the same `cuda_device` /
-  `cuda_context` and tears it down when the first of them ends, so the
-  other server's next frame submission faults inside StreamSDK and its
-  `stop` no longer returns. Two WebRTC servers are not affected. Run
-  the pair in separate processes, or pin at most one of them with
-  `cuda_device`.
+- **WebRTC and native in one process.** Do not run a WebRTC server
+  and a native server pinned to the same GPU in one process. StreamSDK
+  keeps one adapter context per GPU and process; once any server
+  supplies a CUDA context (an explicit `cuda_context`, or the primary
+  context ovstream retains for `cuda_device` alone), every WebRTC and
+  native session on that GPU adopts it, and the first session to end
+  tears it down, which faults the other server's next `stream_video`.
+  Two WebRTC servers are not affected. Run such a pair in separate
+  processes; a producer whose frames live in the primary context (plain
+  `cudaMalloc`) can instead leave `cuda_device` at -1 on a single-GPU
+  host, where the default adapter is the producer's GPU.
 - One client connection per server. A second client cannot attach
   while one is connected; applications that need more viewers start
   more servers on distinct ports. RTSP is the transport that serves
@@ -347,8 +351,10 @@ definition.
   while capture is active. The previous defaults are not restored when
   capture stops; an application that needs them back must save them
   before `start` and restore them after `stop`.
-- `webrtc.event_tracing` enables StreamSDK event tracing (ETL) for
-  that server, for diagnostics. Off by default.
+- `webrtc.event_tracing` enables StreamSDK event tracing for that
+  server, for diagnostics: one `.etli` file per session in the working
+  directory. Off by default. On Linux, tracing works for one server per
+  process (StreamSDK limitation).
 - STUN / TURN credentials are supplied via
   `ovstream_webrtc_set_ice_servers` (C) /
   `Server.set_webrtc_ice_servers` (Python). Replace-all semantics;
@@ -627,7 +633,7 @@ Pitch is the second alignment surface. For raw CUDA, `pitch_bytes` should be at 
 
 ### Frames submitted before a client connects
 
-Video frames on WebRTC, native and RTSP servers, and audio frames on WebRTC and native servers, submitted while no client is connected are dropped and the call succeeds, so a producer streams at its own rate without checking connection state. RTSP also drops video frames between a client connecting and its media being configured, which happens after the connection callback, so a frame submitted from `on_connection` may still be dropped. Once a client is connected, WebRTC and native wait briefly (about 200 ms) for its video or audio stream to come up and report `ERROR` (video) or `TIMEOUT` (audio) if it does not. Drops are logged at verbose level. SHM and CUDASHM publish every frame into the ring whether or not a reader is attached, so a reader that attaches later starts from the latest slot.
+Video frames on WebRTC, native and RTSP servers, and audio frames on WebRTC and native servers, submitted while no client is connected are dropped and the call succeeds, so a producer streams at its own rate without checking connection state. RTSP also drops video frames between a client connecting and its media being configured, which happens after the connection callback, so a frame submitted from `on_connection` may still be dropped. Once a client is connected, WebRTC and native wait briefly (about 200 ms) for its video or audio stream to come up and otherwise drop the frame as well, which also covers the moment during a disconnect when the stream is gone before the client is reported gone. Drops are logged at verbose level. SHM and CUDASHM publish every frame into the ring whether or not a reader is attached, so a reader that attaches later starts from the latest slot.
 
 ### A silent producer loses its clients
 
@@ -655,7 +661,7 @@ Python equivalent: `ovstream.initialize(log_fn=..., log_min_severity=...)` — s
 
 DLSS Frame Generation is enabled by the renderer (ovrtx reads two attributes on the RenderProduct), not by ovstream, and whether it engages depends on the GPU, driver and render configuration. Do not assume it: count the frames each render step returns and pace the delivered stream from that. Generated frames add about one base-frame interval of presentation latency (the interpolated frame is shown before the simulated frame it leads to), so the smoothness gain is always reported next to that cost. ovstream sees only the presented frames; it needs no knowledge of which were generated.
 
-### One GStreamer and one CUDA runtime per process
+### Shared GStreamer, separate CUDA runtimes
 
 ovstream bundles GStreamer, GLib and the CUDA runtime so that installing it needs nothing else, and ovrtx bundles the same libraries. GStreamer and GLib are loaded by name (`libgstreamer-1.0.so.0`, `libglib-2.0.so.0` and their Windows equivalents), and a process loads a given shared-library name once, so with both libraries in one process whichever copy loaded first serves both. The CUDA runtime is different: ovrtx loads its copy by path when a renderer is created, so a process composing the two holds two `libcudart` images. Both cases are harmless for the same reason: ovstream ships the builds ovrtx does, taken from the same dependency set, so the copy that wins the name and the two cudart images are identical:
 
@@ -664,6 +670,8 @@ ovstream bundles GStreamer, GLib and the CUDA runtime so that installing it need
 | 0.5.0 | 1.28.6 | 2.88.0 | 12.8 | ovrtx 0.5.0 |
 
 Later releases bundle the same runtimes unless their changelog entry says otherwise; the exact versions shipped by any release are listed in its `PACKAGE-LICENSES/` directory. Earlier ovstream releases bundled GStreamer 1.24 and CUDA runtime 12.0: alongside an ovrtx that loaded first they ran on ovrtx's copies, and alongside one that loaded second ovrtx ran on theirs. Keep the two on matching rows, or load ovrtx first.
+
+The same first-one-wins rule applies to any other module that links GLib by name, including a system GLib: an OpenCV built against the distribution's `libglib-2.0.so.0` (Ubuntu 22.04 ships 2.72) imported before ovstream leaves ovstream's own GLib libraries bound to that older copy, and the import fails with an undefined GLib symbol (for example `g_dir_unref`). Import ovstream before such modules, as the bundled examples do; the newer GLib then serves both.
 
 GStreamer is also *initialised* once per process, with the environment in effect at that moment, so ovstream does not rely on the environment to find its plugins: on the first RTSP server creation it registers its bundled plugin directory explicitly, whether or not another library initialised GStreamer first, and fails server creation with the names of any elements still missing. The log records which GStreamer runtime is live when it was not ovstream's own. The WebRTC, native, SHM and CUDASHM backends do not use GStreamer and are unaffected.
 
@@ -682,7 +690,7 @@ ovstream is one library in an application built from several. `examples/python/a
 - **One swizzle, after the composite.** Renderer output is RGBA8, ovui's export is RGBA8, ovstream ingests BGRA8: a single kernel converts the finished frame. When ovrtx alone feeds the stream, its SPG `Swizzle` node can emit BGRA8 directly, but that output disables frame generation, so the reference implementation keeps the conversion in the application.
 - **Control channel before `start()`.** Text, resize, cursor and application-message callbacks are registered before the server starts, and every callback hands off to the main thread through a queue so scene writes happen on the loop thread only.
 - **Shutdown order.** Servers stop first, then in-flight render work is finished, then the application's CUDA resources are freed, then the UI and renderer are destroyed, then `ovstream.shutdown()`.
-- **One runtime per process.** ovrtx and ovstream bundle the same GStreamer, GLib and CUDA runtime builds and share them once loaded together; the versions per release, and the one-initialisation rule for GStreamer, are under "One GStreamer and one CUDA runtime per process" in Common gotchas.
+- **Shared GStreamer, separate CUDA runtimes.** ovrtx and ovstream bundle the same GStreamer and GLib builds and share whichever copy loads first; each keeps its own CUDA runtime image. The versions per release and the one-initialisation rule for GStreamer are under "Shared GStreamer, separate CUDA runtimes" in Common gotchas.
 
 ## Distribution
 

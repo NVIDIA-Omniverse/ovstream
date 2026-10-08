@@ -21,7 +21,7 @@ Use ovstream when you have a renderer, CUDA producer, tensor producer, or pre-en
 * **Connection acceptance** (WebRTC / native) — a callback sees each client's signaling headers and accepts or rejects the connection.
 * **Stream control messages** (WebRTC / native) — the browser client's config handshake, clipboard sync in both directions, cursor forwarding, app-message routing, and QoS hints via typed callbacks. `ovstream_utils.messaging` adds the browser client's application message convention on top: event types, correlation ids, and automatic splitting and reassembly of large payloads.
 * **STUN / TURN for WebRTC NAT traversal** — supply ICE servers via a single `set_webrtc_ice_servers` call before or after `start`; refresh time-limited TURN credentials live without dropping connected clients.
-* **Self-contained** — no Kit, no Carbonite, no Omniverse app required. The wheel bundles its native dependencies (StreamSDK, GStreamer, the CUDA runtime, the bundled `gstnvenc` plugin); `pip install ovstream` is enough. The bundled runtimes match the ones ovrtx ships, so the two can share a process; the per-release versions are in [ARCHITECTURE.md](docs/ARCHITECTURE.md#one-gstreamer-and-one-cuda-runtime-per-process).
+* **Self-contained** — no Kit, no Carbonite, no Omniverse app required. The wheel bundles its native dependencies (StreamSDK, GStreamer, the CUDA runtime, the bundled `gstnvenc` plugin); `pip install ovstream` is enough. The bundled runtimes match the ones ovrtx ships, so the two can share a process; the per-release versions are in [ARCHITECTURE.md](docs/ARCHITECTURE.md#shared-gstreamer-separate-cuda-runtimes).
 
 ## Supported inputs and outputs
 
