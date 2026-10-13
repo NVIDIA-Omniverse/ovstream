@@ -22,7 +22,7 @@
 //--------------------------------------------------------------
 #define OVSTREAM_VERSION_MAJOR 0
 #define OVSTREAM_VERSION_MINOR 5
-#define OVSTREAM_VERSION_PATCH 6
+#define OVSTREAM_VERSION_PATCH 7
 
 //--------------------------------------------------------------
 // @brief Mark a public entry point, type, or field as deprecated.
